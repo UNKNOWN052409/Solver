@@ -16,6 +16,24 @@ import time
 UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
+# Vendor-neutral challenge markers: title/body fragments that mean
+# "an edge bot-wall is up", regardless of whose wall it is.
+CHALLENGE_MARKERS = (
+    "just a moment",              # Cloudflare managed challenge
+    "vercel security checkpoint", # Vercel attack challenge mode
+    "checking your browser",
+    "attention required",
+    "ddos protection by",
+    "please wait while we verify",
+)
+
+
+def looks_challenged(status: int, text: str) -> bool:
+    if status == 403 or status == 429:
+        return True
+    low = text.lower()
+    return any(m in low for m in CHALLENGE_MARKERS)
+
 
 def parse_proxy(p):
     """Normalize proxy string -> dict for playwright/patchright."""
@@ -58,7 +76,7 @@ def probe_requests(url, proxy=None, timeout=30):
         timeout=timeout,
         allow_redirects=True,
     )
-    challenged = "just a moment" in r.text.lower() or r.status_code == 403
+    challenged = looks_challenged(r.status_code, r.text)
     return {
         "engine": "requests", "status": r.status_code,
         "outcome": "challenged" if challenged else "cleared",
@@ -96,8 +114,9 @@ def probe_browser(url, proxy=None, window=45, ua=None):
 
         cleared = False
         while time.time() - t0 < window:
-            title = page.title()
-            if title and "just a moment" not in title.lower():
+            # Text markers only: an in-page JS proof-of-work can clear
+            # without a new navigation, so the original status goes stale.
+            if not looks_challenged(0, page.content()):
                 cleared = True
                 break
             page.wait_for_timeout(1500)
