@@ -91,6 +91,17 @@ def cmd_hcaptcha(a):
     print(svc.solve_hcaptcha(a.sitekey, a.pageurl))
 
 
+def cmd_cf_clearance(a):
+    from solver.api_solver import TwoCaptchaSolver
+
+    svc = TwoCaptchaSolver(a.key, timeout=300.0)
+    result = svc.solve_cloudflare(a.url, a.proxy)
+    print(f"cf_clearance: {result['cf_clearance']}")
+    print(f"user_agent:   {result['user_agent']}")
+    for k, v in result["cookies"].items():
+        print(f"cookie:       {k}={v}")
+
+
 def main():
     p = argparse.ArgumentParser(prog="solver", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -135,6 +146,16 @@ def main():
     hc.add_argument("pageurl")
     hc.add_argument("--key", required=True)
     hc.set_defaults(fn=cmd_hcaptcha)
+
+    cfc = sub.add_parser(
+        "cf-clearance",
+        help="clear a Cloudflare challenge via 2captcha THROUGH your proxy "
+             "(returns cf_clearance bound to that IP)",
+    )
+    cfc.add_argument("url")
+    cfc.add_argument("--proxy", required=True, help="user:pass@host:port")
+    cfc.add_argument("--key", required=True)
+    cfc.set_defaults(fn=cmd_cf_clearance)
 
     args = p.parse_args()
     args.fn(args)

@@ -53,6 +53,26 @@ binary = Preprocessor(remove_lines=True).run(raw)
 print(TesseractEngine().solve(binary))
 ```
 
+## Recon kit (`recon/`)
+
+Edge-testing tools for Cloudflare-class challenges — point them at any
+target (including your own) through any exit IP:
+
+```bash
+# Tiered probe: raw HTTP + patched-browser automation, optionally via proxy
+python3 recon/cf_probe.py https://target.com --proxy user:pass@host:port
+
+# Score a whole proxy pool: ranked CSV of which exits clear the challenge
+python3 recon/pool_score.py targets.txt proxies.txt -o scoreboard.csv
+
+# Delegated clearance: solving service clears FROM your exit IP,
+# returns cf_clearance + matching UA ready for replay
+python -m solver.cli cf-clearance https://target.com --proxy user:pass@host:port --key KEY
+```
+
+Challenge outcomes are bound to IP + UA, so `cf_clearance` cookies must be
+replayed through the same proxy they were minted on.
+
 ## Components
 
 | Module | Role |
