@@ -11,10 +11,17 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-DEFAULT_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 DIGITS = "0123456789"
 LOWER = "abcdefghijklmnopqrstuvwxyz"
 UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+FONT_CANDIDATES = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",      # desktop linux
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",                   # some distros
+    "/system/fonts/Roboto-Regular.ttf",                           # Android
+    "/System/Library/Fonts/Helvetica.ttc",                        # macOS
+    "C:/Windows/Fonts/arialbd.ttf",                               # Windows
+)
 
 
 class CaptchaGenerator:
@@ -23,7 +30,7 @@ class CaptchaGenerator:
         length: int = 5,
         charset: str = DIGITS + LOWER,
         size=(170, 60),
-        font_path: str = DEFAULT_FONT,
+        font_path: str | None = None,
         rotation_range: int = 22,
         noise_dots: int = 220,
         lines: int = 3,
@@ -37,10 +44,14 @@ class CaptchaGenerator:
         self.lines = lines
         self.wave_amplitude = wave_amplitude
 
-        try:
-            self.font = ImageFont.truetype(font_path, size=int(size[1] * 0.62))
-        except OSError:
-            self.font = ImageFont.load_default()
+        candidates = ([font_path] if font_path else []) + list(FONT_CANDIDATES)
+        self.font = ImageFont.load_default()
+        for cand in candidates:
+            try:
+                self.font = ImageFont.truetype(cand, size=int(size[1] * 0.62))
+                break
+            except OSError:
+                continue
 
     def _random_text(self) -> str:
         rng = np.random.default_rng()
