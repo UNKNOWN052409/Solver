@@ -67,7 +67,7 @@ def probe_requests(url, proxy=None, timeout=30):
     }
 
 
-def probe_browser(url, proxy=None, window=45):
+def probe_browser(url, proxy=None, window=45, ua=None):
     try:
         from patchright.sync_api import sync_playwright
         engine_name = "patchright"
@@ -81,8 +81,15 @@ def probe_browser(url, proxy=None, window=45):
         if pw_proxy:
             kwargs["proxy"] = pw_proxy
         browser = p.chromium.launch(**kwargs)
-        ctx = browser.new_context(user_agent=UA, locale="en-US",
-                                  viewport={"width": 1366, "height": 900})
+        # NOTE: if ua is None, headless builds leak "HeadlessChrome" into the
+        # UA string - a trivial bot signal. Pass a real Chrome UA matching the
+        # platform/geo of your exit for meaningful results.
+        ctx_kwargs = {"locale": "en-US", "viewport": {"width": 1366, "height": 900}}
+        if ua:
+            ctx_kwargs["user_agent"] = ua
+        elif engine_name == "playwright":
+            ctx_kwargs["user_agent"] = UA  # mask the Headless token at least
+        ctx = browser.new_context(**ctx_kwargs)
         page = ctx.new_page()
         t0 = time.time()
         resp = page.goto(url, wait_until="domcontentloaded", timeout=60000)
@@ -113,6 +120,7 @@ def main():
     ap.add_argument("url")
     ap.add_argument("--engine", choices=["requests", "browser", "both"], default="both")
     ap.add_argument("--proxy", help="host:port:user:pass | user:pass@host:port | url")
+    ap.add_argument("--ua", help="override user-agent (match your exit's real profile)")
     ap.add_argument("--window", type=int, default=45, help="challenge wait seconds")
     ap.add_argument("--json", dest="as_json", action="store_true")
     args = ap.parse_args()
@@ -122,7 +130,10 @@ def main():
     for e in engines:
         try:
             fn = probe_requests if e == "requests" else probe_browser
-            r = fn(args.url, args.proxy) if e == "requests" else fn(args.url, args.proxy, args.window)
+            if e == "requests":
+                r = fn(args.url, args.proxy)
+            else:
+                r = fn(args.url, args.proxy, args.window, ua=args.ua)
             results.append(r)
             print(f"[{r['engine']:10s}] {r['outcome']:10s} http={r['status']} "
                   f"{r['elapsed_s']}s clearance={r['cf_clearance']}")
