@@ -6,35 +6,49 @@ identical fingerprints, native proxy rotation, persistent identities.
 > Spec: don't just pass challenges — be unremarkable. No signal should
 > exist to detect.
 
-## Why engine-level (not runtime patches)
+## Engine: CloakBrowser (source-level stealth)
 
-Runtime patching (playwright-stealth, partial patchright) only touches the
-JS layer. Detection stacks read the TLS handshake (JA3/JA4), HTTP/2 frame
-order, and rendering stack — none of which JS patches can reach.
-GhostRise v0.1 rides **Camoufox** (Firefox fork, spoofing at C++ level):
-one binary, one rendering path, headed or headless — no differential
-signal between modes.
+v0.2 rides **CloakBrowser**: a Chromium build with 49 source-level C++
+patches — canvas, WebGL, fonts, GPU, WebRTC, network timing, automation
+signals, CDP input behavior. Nothing is injected via JavaScript; the
+stealth is compiled into the binary.
+
+Verified against live detection stacks:
+- Cloudflare Turnstile: PASS (auto-resolve + managed)
+- reCAPTCHA v3 score: 0.9 (human-class)
+- FingerprintJS / BrowserScan: clean
+
+Why this beats runtime patching (playwright-stealth etc.): detection
+stacks read the TLS handshake and engine internals that JS patches can
+never reach. Here every layer ships inside the browser itself.
 
 ## Usage
 
 ```bash
-pip install 'camoufox[geoip]' && python3 -m camoufox fetch   # host deps
+pip install cloakbrowser          # host dep - binary auto-downloads
 
 # identity vault - stable persona across sessions
 python3 -m ghostrise.cli create work1 --os windows --locale en-US
 
-# headless (default) through a ProxyRise exit
+# headless through a ProxyRise exit
 python3 -m ghostrise.cli open https://target.com -p work1 \
     --proxy user:pass@host:port --shot page.png
 
-# headed - same fingerprint, just visible
+# headed - same fingerprint, visible window
 python3 -m ghostrise.cli open https://target.com -p work1 --headed
 ```
 
 Auto-integrations:
 - `~/.solver_clearance/<domain>.json` cookies replayed automatically
-- geoip matching keeps locale/timezone consistent with exit IP
-- WebRTC blocked at engine level (no real-IP leaks)
+- WebRTC exit-IP spoofing + geoip timezone/locale matching (engine-side)
+- `humanize=True`: Bezier mouse curves, per-char typing, scroll physics
+
+## Server mode (VPS / Docker)
+
+```bash
+docker run -d --name ghost -p 127.0.0.1:9222:9222 cloakhq/cloakbrowser cloakserve
+# then connect from anywhere via connect_over_cdp("http://host:9222")
+```
 
 ## Python API
 
@@ -50,11 +64,11 @@ with GhostSession(profile="work1", proxy="user:pass@host:port") as ghost:
 
 | Phase | Goal | Notes |
 |---|---|---|
-| 0.1 | Camoufox control layer | this release |
-| 0.2 | Pool rotation built-in | round-robin + health scoring via recon/pool_score |
-| 0.3 | Deterministic fingerprint gen | seed -> full fp tree, not just config subset |
-| 0.5 | Own Firefox fork | rename strings, strip Mozilla tells, ship branded builds |
-| 1.0 | Own Chromium fork | BoringSSL-level JA3 control; the long game |
+| 0.1 | Anti-detect control layer | done |
+| 0.2 | CloakBrowser engine swap | this release |
+| 0.3 | Pool rotation built-in | round-robin + health scoring via recon/pool_score |
+| 0.4 | Deterministic fingerprint gen | seed -> full fp tree per identity |
+| 1.0 | Own Chromium fork | fold the whole stack into ProxyRise's binary; JA3-level control |
 
 Phase 1.0 is where "0% captcha rate" becomes an engineering guarantee:
 every observable layer owned by us.
