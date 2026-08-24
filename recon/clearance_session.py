@@ -24,10 +24,16 @@ import json
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 import requests
 
 VAULT_DIR = Path.home() / ".solver_clearance"
+
+# Vendor-neutral challenge detection - single source of truth lives in
+# cf_probe; mirror the markers here so both tools never disagree again.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from cf_probe import looks_challenged  # noqa: E402
 UA_FALLBACK = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -35,8 +41,6 @@ UA_FALLBACK = (
 
 
 def vault_path(url: str) -> Path:
-    from urllib.parse import urlparse
-
     return VAULT_DIR / f"{urlparse(url).netloc}.json"
 
 
@@ -69,35 +73,75 @@ def current_ip():
 
 
 def cmd_mint(a):
+    """Mint via the strongest engine available. CloakBrowser preferred -
+    its headless clears challenges that hold against other engines."""
     try:
-        from patchright.sync_api import sync_playwright
-        engine = "patchright"
+        from cloakbrowser import launch
+        engine = "cloakbrowser"
     except ImportError:
-        from playwright.sync_api import sync_playwright
-        engine = "playwright"
+        try:
+            from patchright.sync_api import sync_playwright
+            engine = "patchright"
+        except ImportError:
+            from playwright.sync_api import sync_playwright
+            engine = "playwright"
 
-    print(f"[*] minting via {engine} (headed window - interact if challenged)")
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=False)
-        ctx = browser.new_context(locale="en-US", viewport={"width": 1280, "height": 850})
-        page = ctx.new_page()
-        page.goto(a.url, wait_until="domcontentloaded", timeout=60000)
+    print(f"[*] minting via {engine} ({'headed' if a.headed else 'headless'})")
 
-        deadline = time.time() + a.wait
-        while time.time() < deadline:
-            cookies = {c["name"]: c["value"] for c in ctx.cookies()}
-            title = page.title()
-            if "cf_clearance" in cookies and "just a moment" not in title.lower():
-                ua = page.evaluate("navigator.userAgent")
-                save_entry(a.url, ua, cookies)
-                print(f"[+] CLEARED in {time.time() - (deadline - a.wait):.0f}s | UA={ua[:60]}...")
-                browser.close()
-                return
-            page.wait_for_timeout(2000)
+    def page_ua(p):
+        try:
+            return p.evaluate("navigator.userAgent")
+        except Exception:
+            return UA_FALLBACK
 
-        print("[-] no cf_clearance within window - was the challenge still up?")
-        browser.close()
+    def settled(ctx_cookies_getter, ctx_page):
+        cookies = {c["name"]: c["value"] for c in ctx_cookies_getter()}
+        has_token = "cf_clearance" in cookies or "_vcrcs" in cookies
+        try:
+            body_ok = not looks_challenged(0, ctx_page.content())
+        except Exception:
+            body_ok = False
+        return (has_token and body_ok), cookies
+
+    t0 = time.time()
+    deadline = t0 + a.wait
+    cookies, ua = None, None
+
+    if engine == "cloakbrowser":
+        browser = launch(headless=not a.headed, humanize=True)
+        try:
+            page = browser.new_page()
+            page.goto(a.url, wait_until="domcontentloaded", timeout=60000)
+            while time.time() < deadline:
+                ok, cookies = settled(lambda: page.context.cookies(), page)
+                if ok:
+                    ua = page_ua(page)
+                    break
+                page.wait_for_timeout(2500)
+        finally:
+            browser.close()
+    else:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=not a.headed)
+            ctx = browser.new_context(locale="en-US",
+                                      viewport={"width": 1280, "height": 850})
+            page = ctx.new_page()
+            page.goto(a.url, wait_until="domcontentloaded", timeout=60000)
+            while time.time() < deadline:
+                ok, cookies = settled(lambda: ctx.cookies(), page)
+                if ok:
+                    ua = page_ua(page)
+                    break
+                page.wait_for_timeout(2500)
+            browser.close()
+
+    elapsed = time.time() - t0
+    if not cookies or ua is None:
+        print(f"[-] no clearance within {elapsed:.0f}s - challenge still up?")
         sys.exit(1)
+
+    save_entry(a.url, ua, cookies)
+    print(f"[+] CLEARED in {elapsed:.0f}s | cookies: {sorted(cookies)}")
 
 
 def cmd_test(a):
@@ -118,7 +162,7 @@ def cmd_test(a):
         cookies=entry["cookies"],
         timeout=30,
     )
-    challenged = "just a moment" in r.text.lower() or r.status_code == 403
+    challenged = looks_challenged(r.status_code, r.text)
     print(f"[*] replay result: HTTP {r.status_code} | {'CHALLENGED' if challenged else 'CLEARED'}")
     if not challenged:
         print(f"[*] body starts: {r.text[:150]!r}")
@@ -144,8 +188,10 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    m = sub.add_parser("mint", help="open headed browser, pass challenge once, save clearance")
+    m = sub.add_parser("mint", help="pass the challenge once, save clearance to vault")
     m.add_argument("url")
+    m.add_argument("--headed", action="store_true",
+                   help="visible window (for checkbox challenges)")
     m.add_argument("--wait", type=int, default=180, help="seconds to wait for clearance")
     m.set_defaults(fn=cmd_mint)
 
