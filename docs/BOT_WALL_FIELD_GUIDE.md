@@ -98,3 +98,42 @@ Score 7/7 before saying "the wall is unbeatable".
 | Stealth browsing engine | `ghostrise/` (CloakBrowser) |
 | Solve legacy captchas | `solver/` engines + API fallback |
 | Delegated CF clearance | `solver.cli cf-clearance` |
+
+## 7. Case Study: Vercel Security Checkpoint v2 (live reverse-engineer)
+
+Captured handshake (network-level, instrumented browser):
+
+```
+GET  /                                                    -> 429 shell
+GET  /.well-known/vercel/security/static/challenge.v2.min.js  (engine, obfuscated)
+GET  /.well-known/vercel/security/static/challenge.v2.wasm    (PoW solver)
+POST /.well-known/vercel/security/request-challenge           (solution submit)
+Set-Cookie: _vcrcs=1.<timestamp>.3600.<sig>                  (1 HOUR TTL)
+reload -> real site
+```
+
+Signal inventory (hooked navigator during challenge):
+    userAgent 275x | userAgentData 33x | language 10x
+    webdriver 6x | hardwareConcurrency 6x | deviceMemory 6x | platform 6x
+
+Findings:
+- Gate #1 is ENVIRONMENT CONSISTENCY, not behavior: UA <-> Client-Hints
+  <-> hardware triangle must agree. No mouse tracking observed.
+- Dynamic difficulty: trusted IP+identity -> light sweep, instant pass;
+  suspicious identity -> full wasm PoW escalation.
+- Clearance is triple-bound: IP + UA + TLS fingerprint (python replay
+  of browser-minted _vcrcs fails; same-browser replay works).
+- Practical bypass ladder: consistent engine persona (CloakBrowser-class)
+  -> mint once -> replay from same stack within TTL.
+
+## 8. DRL mouse agent (ghostrise/rl_mouse.py)
+
+Pure-numpy REINFORCE policy (MLP 6->32->24) trained on synthetic targets.
+Reward shaped by motor-control priors: bell velocity profile, late-move
+smoothness, micro-corrections, Fitts duration band, endpoint precision.
+
+Training result (800 episodes, curriculum):
+    avg reward -7.2 -> -0.11, first successes at 90% difficulty.
+Emergent: direct approach phase + micro-corrections near target.
+Pending: terminal homing precision (<4px window) - needs fine-grained
+near-target actions and a terminal-phase state feature.
