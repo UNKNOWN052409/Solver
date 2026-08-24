@@ -106,6 +106,12 @@ class GhostSession:
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
         return page
 
+    def human(self, page):
+        """Human-shaped action wrappers for agents driving this page."""
+        from ghostrise.behavior import HumanActions
+
+        return HumanActions(page)
+
     def __exit__(self, *exc):
         if self.browser:
             try:

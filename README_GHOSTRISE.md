@@ -43,6 +43,24 @@ Auto-integrations:
 - WebRTC exit-IP spoofing + geoip timezone/locale matching (engine-side)
 - `humanize=True`: Bezier mouse curves, per-char typing, scroll physics
 
+## Human behavior layer (for AI agents)
+
+Agents driving the browser get human-shaped primitives:
+
+```python
+with GhostSession(profile="agent1", proxy=proxy) as ghost:
+    page = ghost.page("https://target.com")
+    human = ghost.human(page)
+    human.type("input#search", "residential proxies", submit=True)
+    human.dwell()
+    human.scroll(800)
+    human.click("a.results > article:first-child")
+```
+
+Bezier mouse travel with overshoot correction, lognormal keystroke
+cadence with rare typo+fix, eased chunked scrolling, reading dwells -
+the behavioral tells that flag instant/linear agent actions are gone.
+
 ## Server mode (VPS / Docker)
 
 ```bash
