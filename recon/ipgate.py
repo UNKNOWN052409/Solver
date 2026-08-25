@@ -41,6 +41,26 @@ KEEPALIVE_SECS = 8 * 60     # probe cadence
 MINT_WAIT = 90              # seconds allowed for a challenge solve
 
 state_lock = threading.Lock()
+
+# ---- persistent browser worker: ek baar launch, har mint reuse ----
+_worker_browser = None
+_worker_page = None
+
+
+def get_worker():
+    """Resident CloakBrowser page - crash pe auto-relaunch."""
+    global _worker_browser, _worker_page
+    try:
+        if _worker_page is not None and not _worker_page.is_closed():
+            return _worker_page
+    except Exception:
+        pass
+    from cloakbrowser import launch
+    log("[*] launching resident browser worker...")
+    _worker_browser = launch(headless=True, humanize=True)
+    _worker_page = _worker_browser.new_page()
+    log("[+] worker ready")
+    return _worker_page
 state = {"session": None, "ua": None, "minted_at": 0.0, "ip": "?", "last_probe": 0.0}
 
 
@@ -80,21 +100,17 @@ def save_vault(cookies, ua):
 
 
 def mint():
-    """Fresh clearance via CloakBrowser (headless). Returns bool."""
-    try:
-        from cloakbrowser import launch
-    except ImportError:
-        log("[!] cloakbrowser missing - cannot mint")
-        return False
-
+    """Fresh clearance resident worker se (launch sirf pehli baar/crash pe)."""
     t0 = time.time()
     log("[*] minting fresh clearance...")
-    with launch(headless=True, humanize=True) as browser:
-        page = browser.new_page()
+    try:
+        page = get_worker()
+        ctx = page.context
+        ctx.clear_cookies()
         page.goto(BASE, wait_until="domcontentloaded", timeout=60000)
         deadline = t0 + MINT_WAIT
         while time.time() < deadline:
-            cookies = {c["name"]: c["value"] for c in page.context.cookies()}
+            cookies = {c["name"]: c["value"] for c in ctx.cookies()}
             if "_vcrcs" in cookies:
                 try:
                     ok = not looks_challenged(0, page.content())
@@ -112,8 +128,19 @@ def mint():
                         f"cookies={sorted(cookies)} | ip={state['ip']}")
                     return True
             page.wait_for_timeout(2500)
-    log("[-] mint failed within window")
-    return False
+        log("[-] mint window expired")
+        return False
+    except Exception as e:
+        log(f"[!] worker error: {e} -> relaunch on next attempt")
+        global _worker_browser, _worker_page
+        try:
+            if _worker_browser:
+                _worker_browser.close()
+        except Exception:
+            pass
+        _worker_browser = None
+        _worker_page = None
+        return False
 
 
 def probe():
