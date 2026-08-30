@@ -4,3 +4,4 @@ __pycache__/
 debug/
 data/
 .pytest_cache/
+.coverage
