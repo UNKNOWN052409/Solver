@@ -24,10 +24,9 @@ import sys
 import threading
 import time
 from collections import defaultdict
-from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs  # noqa: F401 — parse_qs used below
 
 import requests
 

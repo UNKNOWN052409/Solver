@@ -141,7 +141,7 @@ if __name__ == "__main__":
     elif cmd == "login":
         print(json.dumps(ip.login(), indent=2))
     elif cmd == "test":
-        target = sys.argv[2] if len(sys.argv) > 2 else "https://example.com"
+        target = sys.argv[2] if len(sys.argv) > 2 else "https://cleantalk.org/help/protection-test"
         print(json.dumps(ip.test_proxy(target), indent=2))
     else:
         print("usage: ipgate_client.py [health|home|login|test <url>]")

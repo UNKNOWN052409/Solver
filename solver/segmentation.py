@@ -11,7 +11,8 @@ def _x_overlap(a, b):
     return ov / max(min(aw, bw), 1)
 
 
-def find_char_boxes(binary_img: np.ndarray, min_area_frac=0.002, max_boxes=16):
+def find_char_boxes(binary_img: np.ndarray, min_area_frac=0.002, max_boxes=16,
+                   fuse_gaps: bool = False):
     """Locate character blobs in a preprocessed (text=black) image.
 
     Two-pass strategy for noisy captchas:
@@ -48,6 +49,9 @@ def find_char_boxes(binary_img: np.ndarray, min_area_frac=0.002, max_boxes=16):
     ]
     cand = [b[:4] for b in cand]
 
+    if not cand:
+        return []  # all candidates rejected as junk (guards percentile below)
+
     # Speck rejection: reference height from the 90th percentile so noise
     # dots can't drag the baseline down; real glyphs tower above specks.
     ref_h = float(np.percentile([b[3] for b in cand], 90))
@@ -71,6 +75,13 @@ def find_char_boxes(binary_img: np.ndarray, min_area_frac=0.002, max_boxes=16):
                     break
             if changed:
                 break
+
+    # Tiny-gap fusion: OFF by default. Measured on synthetic captchas,
+    # fusing boxes with gap < 0.35*width merges REAL adjacent glyphs
+    # (2/40 exact vs 26/40 without) — it only helps targets whose glyphs
+    # render as horizontal fragments, so it's opt-in per target.
+    if fuse_gaps:
+        kept = merge_touching(kept, gap_ratio=0.35)
 
     kept.sort(key=lambda b: b[0])
 

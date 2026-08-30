@@ -16,8 +16,9 @@ class Preprocessor:
     def __init__(
         self,
         scale: float = 2.0,
-        threshold: str = "otsu",  # "otsu" | "adaptive" | "fixed"
+        threshold: str = "otsu",  # "otsu" | "adaptive" | "fixed" | "percentile"
         fixed_value: int = 128,
+        percentile: float = 10.0,  # "percentile" mode: keep darkest N% of pixels
         denoise: bool = True,
         morph_open: bool = True,
         remove_lines: bool = False,
@@ -26,6 +27,7 @@ class Preprocessor:
         self.scale = scale
         self.threshold = threshold
         self.fixed_value = fixed_value
+        self.percentile = percentile
         self.denoise = denoise
         self.morph_open = morph_open
         self.remove_lines = remove_lines
@@ -63,6 +65,13 @@ class Preprocessor:
                 gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
                 cv2.THRESH_BINARY, 31, 10,
             )
+        elif self.threshold == "percentile":
+            # Keep only the darkest `percentile`% of pixels. Robust when noise
+            # dots + grid lines share the foreground mass with glyphs — Otsu
+            # picks a midpoint that merges all of it into one blob instead.
+            hist = np.bincount(gray.ravel(), minlength=256).cumsum()
+            t = int(np.searchsorted(hist, gray.size * self.percentile / 100.0))
+            _, binimg = cv2.threshold(gray, t, 255, cv2.THRESH_BINARY)
         elif self.threshold == "otsu":
             _, binimg = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         else:

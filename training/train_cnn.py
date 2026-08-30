@@ -23,33 +23,37 @@ from solver.segmentation import extract_chars, find_char_boxes  # noqa: E402
 
 
 def build_dataset(n_samples: int, length: int):
+    """Returns (samples, charset): each sample is (crops [length,32,32], text).
+
+    Crops stay grouped per captcha so the train/val split can be made
+    PER-IMAGE — exploding to individual glyphs before splitting leaks
+    same-image crops into both sets and inflates val accuracy.
+    """
+    import cv2
+
     from solver.generator import DIGITS, LOWER
 
     gen = CaptchaGenerator(length=length, charset=DIGITS + LOWER)
     prep = Preprocessor(scale=2.0)
 
     chars = sorted(set(DIGITS + LOWER))
-    idx = {c: i for i, c in enumerate(chars)}
 
-    xs, ys = [], []
+    samples = []
     attempts = 0
-    while len(xs) < n_samples * length and attempts < n_samples * 6:
+    while len(samples) < n_samples and attempts < n_samples * 6:
         attempts += 1
         img, text = gen.generate()
         binary = prep.run(np.array(img))
         boxes = find_char_boxes(binary)
         if len(boxes) != len(text):
             continue
-        for crop, ch in zip(extract_chars(binary, boxes), text):
-            small = cv2resize(crop)
-            xs.append(small.astype(np.float32) / 255.0)
-            ys.append(idx[ch])
-    return np.stack(xs)[:, None, :, :], np.array(ys), "".join(chars)
-
-
-def cv2resize(crop):
-    import cv2
-    return cv2.resize(crop, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_AREA)
+        crops = extract_chars(binary, boxes)
+        small = [
+            cv2.resize(c, (IMG_SIZE, IMG_SIZE), interpolation=cv2.INTER_AREA)
+            for c in crops
+        ]
+        samples.append((np.stack(small).astype(np.float32) / 255.0, text))
+    return samples, "".join(chars)
 
 
 def main():
@@ -69,16 +73,32 @@ def main():
         sys.exit("[!] PyTorch required for training: pip install torch")
 
     print(f"[*] Building dataset ({args.samples} samples)...")
-    x, y, charset = build_dataset(args.samples, args.length)
-    n = len(x)
-    perm = np.random.permutation(n)
-    cut = int(n * 0.9)
+    samples, charset = build_dataset(args.samples, args.length)
+    idx = {c: i for i, c in enumerate(charset)}
+
+    # Per-image split: whole captchas go to train or val, never both.
+    perm = np.random.permutation(len(samples))
+    cut = int(len(samples) * 0.9)
     tr, va = perm[:cut], perm[cut:]
-    xt = torch.from_numpy(x[tr])
-    yt = torch.from_numpy(y[tr])
-    xv = torch.from_numpy(x[va])
-    yv = torch.from_numpy(y[va])
-    print(f"[+] {n} character crops | classes={len(charset)}")
+
+    def explode(indices):
+        xs, ys = [], []
+        for i in indices:
+            crops, text = samples[i]
+            for crop, ch in zip(crops, text):
+                xs.append(crop)
+                ys.append(idx[ch])
+        return (
+            torch.from_numpy(np.stack(xs)[:, None, :, :]),
+            torch.from_numpy(np.array(ys)),
+        )
+
+    xt, yt = explode(tr)
+    xv, yv = explode(va)
+    print(
+        f"[+] {len(xt)} train / {len(xv)} val character crops "
+        f"({len(tr)}/{len(va)} images) | classes={len(charset)}"
+    )
 
     model = CharNet(len(charset))
     opt = torch.optim.Adam(model.net.parameters(), lr=args.lr)

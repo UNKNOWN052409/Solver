@@ -1,18 +1,30 @@
 """Command line interface.
 
-    python -m solver.cli generate ./data -n 200
-    python -m solver.cli solve image.png [--engine auto] [--model model.pt]
-    python -m solver.cli train --out model.pt -n 4000
-    python -m solver.cli api-image image.png --key YOURKEY
-    python -m solver.cli recaptcha SITEKEY https://target/login --key YOURKEY
+LOCAL
+    solver generate ./data -n 200
+    solver solve image.png [--engine auto] [--model model.pt]
+    solver train --out model.pt -n 4000
+    solver train-real ./realdata --out slot_model.pt        # real labeled data
+    solver serve [--port 8000] [--api-key K]                # host the solve API
+    solver probe https://any-site.com/login                  # fingerprint captcha tech
+    solver health http://host:8000 [-k KEY]                  # check a hosted API
+    solver call http://host:8000 image.png [-k KEY] [--engine slot]
+
+EXTERNAL SERVICE (2captcha-protocol)
+    solver api-image image.png --key YOURKEY
+    solver recaptcha SITEKEY https://target/login --key YOURKEY
+    solver hcaptcha SITEKEY https://target/login --key YOURKEY
+    solver cf-clearance https://target/ --proxy user:pass@host:port --key YOURKEY
+
+    python -m solver.cli <same commands>
 """
 
 import argparse
 import sys
 from pathlib import Path
 
-import numpy as np
 
+# ------------------------------------------------------------------ local
 
 def cmd_generate(a):
     from solver.generator import CaptchaGenerator
@@ -24,10 +36,13 @@ def cmd_generate(a):
 
 def build_engine(a):
     from solver.engines.cnn_engine import CNNEngine
+    from solver.engines.slot_engine import SlotEngine
     from solver.engines.tesseract_engine import TesseractEngine
 
     if a.engine == "cnn":
         return CNNEngine(a.model)
+    if a.engine == "slot":
+        return SlotEngine(a.model, x0=a.slot_x0, x1=a.slot_x1, n_chars=a.slot_n)
     if a.engine == "tesseract":
         return TesseractEngine()
     # auto
@@ -38,7 +53,7 @@ def build_engine(a):
     sys.exit(
         "[!] No engine available. Either:\n"
         "    - install tesseract:  sudo apt-get install tesseract-ocr\n"
-        f"    - or train a model:   python -m solver.cli train --out {a.model}"
+        f"    - or train a model:   solver train --out {a.model}"
     )
 
 
@@ -52,14 +67,16 @@ def cmd_solve(a):
     if raw is None:
         sys.exit(f"[!] Cannot read image: {a.image}")
 
-    prep = Preprocessor(remove_lines=a.remove_lines)
-    binary = prep.run(raw)
+    if getattr(engine, "wants_binary", True):
+        prep = Preprocessor(remove_lines=a.remove_lines)
+        image = prep.run(raw)
+        if a.debug:
+            prep.save_debug({"1_binary": image})
+            print("[*] Debug images saved to ./debug/")
+    else:
+        image = raw  # engine does its own preparation (e.g. slot slicing)
 
-    if a.debug:
-        prep.save_debug({"1_binary": binary})
-        print("[*] Debug images saved to ./debug/")
-
-    text = engine.solve(binary)
+    text = engine.solve(image)
     print(f"{engine.name}: {text}")
 
 
@@ -69,6 +86,103 @@ def cmd_train(a):
                 "--epochs", str(a.epochs), "--length", str(a.length)]
     train_main()
 
+
+def cmd_train_real(a):
+    from training.train_slot import main as train_main
+    sys.argv = ["train_slot.py", "--data", a.data, "--out", a.out,
+                "--x0", str(a.x0), "--x1", str(a.x1), "--n-chars", str(a.n_chars),
+                "--epochs", str(a.epochs)]
+    train_main()
+
+
+# ------------------------------------------------------------------ service API
+
+def cmd_serve(a):
+    import os
+
+    import uvicorn
+
+    if a.api_key:
+        os.environ["SOLVER_API_KEY"] = a.api_key
+    if a.model_dir:
+        os.environ["SOLVER_MODEL_DIR"] = str(Path(a.model_dir).resolve())
+    uvicorn.run("solver.server:app", host=a.host, port=a.port, reload=False)
+
+
+def cmd_probe(a):
+    from solver.server import probe as _probe  # reuse the endpoint logic
+    import json
+
+    result = _probe(a.url)
+    print(json.dumps(result, indent=2))
+
+
+def cmd_health(a):
+    from solver.client import SolverClient
+
+    sc = SolverClient(a.url, api_key=a.key)
+    import json
+    print(json.dumps(sc.health(), indent=2))
+
+
+def cmd_call(a):
+    from solver.client import SolverClient
+
+    sc = SolverClient(a.url, api_key=a.key)
+    print(sc.solve_image_file(a.image, engine=a.engine, model=a.model,
+                              slot_x0=a.slot_x0, slot_x1=a.slot_x1, slot_n=a.slot_n))
+
+
+# ------------------------------------------------------------------ netkit / keys
+
+def cmd_fetch(a):
+    """Stealth-fetch any URL with the built-in browser identity."""
+    from solver.netkit import NetKit
+
+    nk = NetKit(user=a.user, adblock=not a.no_adblock)
+    r = nk.get(a.url)
+    if a.out:
+        r.save(a.out)
+        print(f"[+] {r.status} -> {a.out} ({len(r.body)} bytes)")
+    else:
+        print(r.text)
+    nk.flush_har()
+
+
+def cmd_xget(a):
+    """Fetch X/Twitter posts without login (public syndication API)."""
+    from solver.netkit import NetKit
+
+    nk = NetKit(user=a.user)
+    try:
+        posts = nk.x_posts(a.handle)
+    except RuntimeError as e:
+        sys.exit(f"[!] {e}")
+    for p in posts:
+        print(f"@{a.handle} | {p['created'][:16]} | ♥{p['likes']} ⟳{p['rts']}")
+        print(f"   {p['text'][:200]}")
+    if not posts:
+        sys.exit("[!] no posts returned (syndication may be rate-limited — retry later)")
+
+
+def cmd_keygen(a):
+    """Generate a solver API key into the keyring."""
+    import json as _json
+
+    from solver.keyring import default_keyring
+
+    kr = default_keyring()
+    if a.list_only:
+        print(_json.dumps(kr.list(), indent=2))
+        return
+    info = kr.create(label=a.label, days=a.days)
+    print(_json.dumps(info, indent=2))
+    if a.revoke:
+        ok = kr.revoke(a.revoke)
+        print(f"[{'+' if ok else '!'}] revoke {'ok' if ok else 'FAILED'}: {a.revoke[:14]}…")
+
+
+# ------------------------------------------------------------------ external solving
 
 def cmd_api_image(a):
     from solver.api_solver import TwoCaptchaSolver
@@ -102,6 +216,8 @@ def cmd_cf_clearance(a):
         print(f"cookie:       {k}={v}")
 
 
+# ------------------------------------------------------------------ parser
+
 def main():
     p = argparse.ArgumentParser(prog="solver", description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -117,8 +233,11 @@ def main():
 
     s = sub.add_parser("solve", help="solve an image captcha locally")
     s.add_argument("image")
-    s.add_argument("--engine", choices=["auto", "tesseract", "cnn"], default="auto")
+    s.add_argument("--engine", choices=["auto", "tesseract", "cnn", "slot"], default="auto")
     s.add_argument("--model", default="model.pt")
+    s.add_argument("--slot-x0", type=int, default=11, help="glyph band start (81px ref)")
+    s.add_argument("--slot-x1", type=int, default=69, help="glyph band end (81px ref)")
+    s.add_argument("--slot-n", type=int, default=4, help="chars per captcha")
     s.add_argument("--remove-lines", action="store_true")
     s.add_argument("--debug", action="store_true")
     s.set_defaults(fn=cmd_solve)
@@ -129,6 +248,67 @@ def main():
     t.add_argument("--epochs", type=int, default=12)
     t.add_argument("--length", type=int, default=5)
     t.set_defaults(fn=cmd_train)
+
+    tr = sub.add_parser("train-real", help="train the slot CNN on a REAL labeled dataset")
+    tr.add_argument("data", help="dir with data.txt + images/ (no synthesis)")
+    tr.add_argument("--out", default="slot_model.pt")
+    tr.add_argument("--x0", type=int, default=11)
+    tr.add_argument("--x1", type=int, default=69)
+    tr.add_argument("--n-chars", type=int, default=4)
+    tr.add_argument("--epochs", type=int, default=12)
+    tr.set_defaults(fn=cmd_train_real)
+
+    # ------- hosted API -------
+
+    sv = sub.add_parser("serve", help="host the solve API (FastAPI/uvicorn)")
+    sv.add_argument("--host", default="0.0.0.0")
+    sv.add_argument("--port", type=int, default=8000)
+    sv.add_argument("--api-key", default="", help="require this as X-API-Key header")
+    sv.add_argument("--model-dir", default="", help="where model .pt files live")
+    sv.set_defaults(fn=cmd_serve)
+
+    pr = sub.add_parser("probe", help="fingerprint captcha tech on any URL")
+    pr.add_argument("url")
+    pr.set_defaults(fn=cmd_probe)
+
+    h = sub.add_parser("health", help="check a hosted solver API")
+    h.add_argument("url")
+    h.add_argument("-k", "--key", default=None)
+    h.set_defaults(fn=cmd_health)
+
+    c = sub.add_parser("call", help="solve an image via a hosted solver API")
+    c.add_argument("url")
+    c.add_argument("image")
+    c.add_argument("-k", "--key", default=None)
+    c.add_argument("--engine", default="auto")
+    c.add_argument("--model", default="model.pt")
+    c.add_argument("--slot-x0", type=int, default=11)
+    c.add_argument("--slot-x1", type=int, default=69)
+    c.add_argument("--slot-n", type=int, default=4)
+    c.set_defaults(fn=cmd_call)
+
+    # ------- stealth browsing (netkit) -------
+
+    f = sub.add_parser("fetch", help="stealth-fetch a URL (built-in browser identity)")
+    f.add_argument("url")
+    f.add_argument("--user", default="agent-1", help="per-user browser identity")
+    f.add_argument("--out", default="", help="save body to file instead of printing")
+    f.add_argument("--no-adblock", action="store_true", help="allow trackers/ads")
+    f.set_defaults(fn=cmd_fetch)
+
+    x = sub.add_parser("xget", help="fetch X/Twitter posts without login")
+    x.add_argument("handle")
+    x.add_argument("--user", default="agent-1")
+    x.set_defaults(fn=cmd_xget)
+
+    kg = sub.add_parser("keygen", help="generate/list/revoke solver API keys")
+    kg.add_argument("--label", default="", help="name for the new key")
+    kg.add_argument("--days", type=int, default=None, help="expiry in days (default: never)")
+    kg.add_argument("--revoke", default="", help="full key to revoke instead of creating")
+    kg.add_argument("--list", dest="list_only", action="store_true", help="list keys")
+    kg.set_defaults(fn=cmd_keygen)
+
+    # ------- external solving service -------
 
     ai = sub.add_parser("api-image", help="solve image captcha via 2captcha API")
     ai.add_argument("image")

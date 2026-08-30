@@ -56,7 +56,6 @@ def test_android_font_candidate_resolves(tmp_path, monkeypatch):
     monkeypatch.setattr(gen, "FONT_CANDIDATES", (str(android_ttf),))
     g = gen.CaptchaGenerator()
     # must be a real truetype font, not PIL's built-in bitmap fallback
-    from PIL import ImageFont
 
     assert isinstance(g.font, ImageFont.FreeTypeFont)
     img, _ = g.generate()

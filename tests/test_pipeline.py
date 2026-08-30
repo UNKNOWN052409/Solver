@@ -8,7 +8,6 @@ import pytest
 def samples(tmp_path_factory):
     from solver.generator import CaptchaGenerator
 
-    out = tmp_path_factory.mktemp("data")
     gen = CaptchaGenerator(length=5)
     return [gen.generate() for _ in range(20)]
 
@@ -48,4 +47,6 @@ def test_tesseract_engine_reports_availability():
 
 
 def test_cli_module_imports():
-    from solver import cli  # noqa: F401
+    from solver import cli  # import side-effect check: argparse builds OK
+
+    assert hasattr(cli, "main")

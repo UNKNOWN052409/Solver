@@ -10,7 +10,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from ..preprocessor import Preprocessor
 from ..segmentation import extract_chars, find_char_boxes
 from .base import BaseEngine
 
@@ -53,6 +52,8 @@ class CNNEngine(BaseEngine):
 
     def solve(self, image: np.ndarray) -> str:
         boxes = find_char_boxes(image)
+        if not boxes:
+            return ""  # segmentation found no glyph candidates
         crops = extract_chars(image, boxes)
         batch = np.stack([self._prep_crop(c) for c in crops])[:, None, :, :]
         x = self.torch.from_numpy(batch)
@@ -63,7 +64,12 @@ class CNNEngine(BaseEngine):
     @staticmethod
     def available(model_path: str) -> bool:
         try:
-            import torch  # noqa: F401
+            import torch as _torch  # availability probe
+            assert _torch is not None
         except ImportError:
             return False
         return Path(model_path).exists()
+
+    def instance_available(self) -> bool:
+        """An engine with a loaded model is usable."""
+        return getattr(self, "model", None) is not None

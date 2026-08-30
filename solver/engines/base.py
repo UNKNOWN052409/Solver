@@ -7,6 +7,7 @@ import numpy as np
 
 class BaseEngine(ABC):
     name = "base"
+    wants_binary = True  # False = engine consumes the RAW image itself
 
     @abstractmethod
     def solve(self, image: np.ndarray) -> str:
