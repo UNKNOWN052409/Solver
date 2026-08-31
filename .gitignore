@@ -5,3 +5,11 @@ debug/
 data/
 .pytest_cache/
 .coverage
+.libclang/
+libclang-*.whl
+
+
+
+# Added by cargo
+
+/target

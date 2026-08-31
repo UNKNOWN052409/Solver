@@ -1,0 +1,43 @@
+[package]
+name = "ghostmouse"
+version = "0.1.0"
+edition = "2024"
+description = "Stealth agentic web client: Chrome TLS, per-user identity, human behavior, captcha plumbing — one light binary for AI agents"
+
+[dependencies]
+# HTTP + Chrome-shaped TLS (BoringSSL fork: JA3/JA4 of real Chrome).
+# Vendored at vendor/rquest so we control the build; features we use:
+#   cookies   — in-memory cookie jar (clearance replay, session identity)
+#   multipart — captcha image upload to the solver API
+#   socks     — SOCKS4/5/5h proxies (residential rotations)
+#   stream    — response streaming (long body reads)
+rquest = { path = "vendor/rquest", features = ["cookies", "multipart", "socks", "stream", "gzip", "brotli", "zstd", "deflate", "json"] }
+# async runtime (net/sync/io-util: JSONL drive API server)
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net", "sync", "io-util"] }
+# cookie store
+cookie_store = "0.22"
+url = "2"
+# JSON for API mode + X syndication parsing
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Chrome TLS presets (JA3/JA4 + HTTP2 frame shapes for Chrome 100–136),
+# vendored next to rquest so both compile against the same source.
+rquest-util = { path = "vendor/rquest-util", default-features = false, features = ["emulation", "gzip", "brotli", "deflate", "zstd"] }
+scraper = "0.20"
+# clap for the CLI
+clap = { version = "4", features = ["derive"] }
+# brotli decode (rquest handles gzip/deflate/br itself, extra for raw paths)
+rand = "0.8"
+
+[profile.release]
+opt-level = "z"     # size-optimized: lightweight binary
+lto = true
+strip = true
+panic = "abort"
+
+# rquest is a direct path dependency above (vendor/rquest), so no
+# [patch.crates-io] entry is needed.
+# rquest-util (vendored) depends on "rquest" from crates.io — patch it to
+# our vendored copy so both crates compile against the same rquest.
+[patch.crates-io]
+rquest = { path = "vendor/rquest" }
