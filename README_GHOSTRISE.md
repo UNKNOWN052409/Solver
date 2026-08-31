@@ -1,4 +1,4 @@
-# GhostMouse 🌭 — Rust agentic stealth web client (GhostRise v0.3 core)
+# GhostMouse 🌭 — Rust agentic stealth web client (GhostRise v0.4 core)
 
 One light Rust binary that gives AI agents a browser-shaped web client:
 real-Chrome TLS (JA3/JA4/HTTP2), stable per-user identities, human-timed
@@ -17,7 +17,7 @@ and captcha plumbing into Solver — with zero DOM/JS engine bloat.
 | Identity | ephemeral | stable per-user persona + rhythm |
 | Tracker calls | many | 0 (42 domains refused locally) |
 | Captcha | fails / paid API | detect → Solver API → clearance vault replay |
-| Search | paid API | local SearXNG → DDG → Bing fallback chain |
+| Search | paid API | local SearXNG → DDG → Bing → Mojeek chain |
 | Drive API | REST crawl API | JSONL/TCP ops (MCP-bridgeable) |
 | Binary | service | single ~2MB static Rust binary |
 | Cost | per-page | free, local |
@@ -59,10 +59,15 @@ ghostmouse images https://example.com
 # captcha recon: tech + sitekeys + wall status
 ghostmouse sniff https://17.wtf
 
-# X posts without login
+# X posts without login (syndication -> nitter fallback chain)
 ghostmouse x elonmusk --limit 10
 
-# multi-engine search (SearXNG -> DDG -> Bing)
+# live captcha battery: 10 demo/real sites, wide tech detect
+ghostmouse battery
+ghostmouse battery --filter 2captcha            # subset
+ghostmouse battery --solve --key sk-solver-...  # also solve walls
+
+# multi-engine search (SearXNG -> DDG -> Bing -> Mojeek)
 ghostmouse search "rust tls fingerprint"
 
 # fill + submit first form (fields as name=value)
@@ -77,6 +82,28 @@ ghostmouse solve-image captcha.png --api http://127.0.0.1:8000 --key ...
 
 # which persona am I?
 ghostmouse whoami
+
+## Captcha battery (v0.4, live-verified 2026-08-31)
+
+`ghostmouse battery` probes 10 demo/real targets, detects the wall tech
+on each, and reports a JSON match summary. All 10 matched on the last
+live run (docs/battery_live_2026-08-31.json):
+
+- 2captcha demos: hcaptcha, recaptcha-v2/v3/invisible, turnstile
+- accounts.hcaptcha.com demo, patrickhlauke recaptcha demo
+- ivasms.com — real Cloudflare managed-challenge wall (403) detected
+- 17.wtf — SvelteKit hcaptcha sitekey extracted from JS env
+- httpbin.org — control page, correctly clean
+
+Wide tech detection: cloudflare-turnstile, cf-managed-challenge,
+hcaptcha, recaptcha, geetest, friendly-captcha, mtcaptcha,
+funcaptcha/arkose, datadome, aws-waf, slider-captcha, image-captcha.
+
+## X fallback chain
+
+syndication __NEXT_DATA__ (rate-limit-aware backoff honoring
+x-rate-limit-reset) -> nitter HTML -> nitter RSS across 6 instances.
+One dead endpoint never kills the read.
 ```
 
 Global flags: `--user` (identity), `--proxy http/socks5://[user:pass@]host:port`,

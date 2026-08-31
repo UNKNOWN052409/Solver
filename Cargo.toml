@@ -1,6 +1,6 @@
 [package]
 name = "ghostmouse"
-version = "0.1.0"
+version = "0.4.0"
 edition = "2024"
 description = "Stealth agentic web client: Chrome TLS, per-user identity, human behavior, captcha plumbing — one light binary for AI agents"
 

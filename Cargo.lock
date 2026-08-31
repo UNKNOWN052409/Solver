@@ -691,7 +691,7 @@ dependencies = [
 
 [[package]]
 name = "ghostmouse"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "clap",
  "cookie_store 0.22.1",
