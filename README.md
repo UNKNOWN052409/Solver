@@ -73,6 +73,28 @@ cookie jar per profile, DuckDuckGo-style tracker prevention (70+ domains
 refused locally), X post fetch via the public syndication API, and HAR
 logging with HARLOG=1. No Chrome, no Playwright — a few MB of RAM.
 
+## Arena key-system bridge (`solver/arena.py`)
+
+Self-contained arena.ai (lmarena) bridge — token mint + login + chat, sab
+browser-context se, no paid solving service. Arena's server validates the
+reCAPTCHA Enterprise token against browser telemetry, so the bridge drives
+the real page (Firefox headless) instead of replaying HTTP.
+
+```bash
+python -m solver.arena login <email> <password>   # session -> ~/.arena/session.json
+python -m solver.arena whoami                     # session check (200 + user)
+python -m solver.arena models                     # 100+ model name->uuid map
+python -m solver.arena chat "prompt"             # battle (2 models)
+python -m solver.arena chat "prompt" --model qwen3.7-plus
+python -m solver.arena serve --port 8020         # OpenAI-compat /v1
+```
+
+Protocol notes (reverse-engineered): `POST /nextjs-api/stream/create-evaluation`
+with UUIDv7 ids, `mode: battle|direct-battle`, `modelAId` = leaderboard uuid,
+`modality: chat`, `recaptchaV3Token` minted via `grecaptcha.enterprise.execute`
+(action `chat_submit`); SSE reply frames `a0:`/`b0:` carry model A/B deltas.
+Rate-limit aware (60s backoff + retry built in).
+
 ## Library use
 
 ```python

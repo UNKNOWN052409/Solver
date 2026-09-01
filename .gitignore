@@ -13,3 +13,6 @@ libclang-*.whl
 # Added by cargo
 
 /target
+
+# arena bridge runtime state — NEVER push
+arena_session.json
