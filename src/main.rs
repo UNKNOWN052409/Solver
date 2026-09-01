@@ -987,6 +987,57 @@ mod agent {
             Err(format!("all X sources failed: {}", errs.join("; ")))
         }
 
+        /// Single X post by ID — the embed-widget JSON endpoint
+        /// (cdn.syndication.twimg.com/tweet-result) serves full tweet
+        /// data to any client, no login. Plain TLS + Accept: json.
+        /// Live-verified: 200 with text/likes/user/verified fields.
+        pub async fn x_post_by_id(&mut self, id: &str) -> Result<Value, String> {
+            let url = format!(
+                "https://cdn.syndication.twimg.com/tweet-result?id={id}&lang=en&token=x"
+            );
+            let plain = rquest::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .redirect(rquest::redirect::Policy::limited(10))
+                .build()
+                .map_err(|e| e.to_string())?;
+            self.total_requests += 1;
+            let resp = plain
+                .get(&url)
+                .header("accept", "application/json")
+                .header(
+                    "user-agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36",
+                )
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let status = resp.status().as_u16();
+            let body = resp.text().await.map_err(|e| e.to_string())?;
+            if status != 200 {
+                return Err(format!("tweet-result returned {status}"));
+            }
+            let v: Value = serde_json::from_str(&body).map_err(|e| format!("bad JSON: {e}"))?;
+            // normalized into the same shape as x_posts entries so agents
+            // consume timelines and single posts uniformly
+            Ok(serde_json::json!({
+                "id": v.get("id_str").and_then(|x| x.as_str()).unwrap_or(id),
+                "text": v.get("text").and_then(|x| x.as_str()).unwrap_or(""),
+                "created": v.get("created_at").and_then(|x| x.as_str()).unwrap_or(""),
+                "likes": v.get("favorite_count").and_then(|x| x.as_i64()).unwrap_or(0),
+                "rts": v.get("retweet_count").and_then(|x| x.as_i64()).unwrap_or(0),
+                "replies": v.get("conversation_count").and_then(|x| x.as_i64()).unwrap_or(0),
+                "author": v.get("user").and_then(|u| u.get("name")).and_then(|x| x.as_str()).unwrap_or(""),
+                "handle": v.get("user").and_then(|u| u.get("screen_name")).and_then(|x| x.as_str()).unwrap_or(""),
+                "verified": v.get("user").and_then(|u| u.get("is_blue_verified")).and_then(|x| x.as_bool()).unwrap_or(false),
+                "lang": v.get("lang").and_then(|x| x.as_str()).unwrap_or(""),
+                "photos": v.get("mediaDetails").and_then(|m| m.as_array()).map(|a| {
+                    a.iter().filter_map(|m| m.get("media_url_https").and_then(|x| x.as_str()).map(|s| s.to_string())).collect::<Vec<_>>()
+                }).unwrap_or_default(),
+                "reply_to": v.get("in_reply_to_screen_name").and_then(|x| x.as_str()).unwrap_or(""),
+                "source": "tweet-result",
+            }))
+        }
+
         /// Chain hop 1: the syndication feed (login-free, JSON in shell).
         /// 429s from this endpoint are transient rate limits — back off
         /// and retry (2s, then 5s) before falling to nitter instances.
@@ -1635,6 +1686,7 @@ mod server {
     ///           {"op": "tables", "url": "..."}
     ///           {"op": "search", "query": "...", "limit": 10}
     ///           {"op": "x", "handle": "elonmusk", "limit": 20}
+    ///           {"op": "xpost", "id": "2094130588047266206"}
     ///           {"op": "sniff", "url": "..."}
     ///           {"op": "solve", "url": "..."}
     ///           {"op": "battery", "solve": false, "filter": "2captcha"}
@@ -1728,6 +1780,16 @@ mod server {
                 }
                 match search::run(&mut a, query, limit, engine).await {
                     Ok(hits) => json!({ "ok": true, "hits": hits }),
+                    Err(e) => json!({ "ok": false, "error": e }),
+                }
+            }
+            "xpost" => {
+                let id = req.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+                if id.is_empty() {
+                    return json!({ "ok": false, "error": "id required" });
+                }
+                match a.x_post_by_id(&id).await {
+                    Ok(post) => json!({ "ok": true, "post": post }),
                     Err(e) => json!({ "ok": false, "error": e }),
                 }
             }
@@ -1955,6 +2017,13 @@ mod cli {
         Sniff { url: String },
         /// Read X/Twitter posts without login
         X { handle: String, #[arg(default_value = "20")] limit: usize },
+        /// Read a single X post by ID (JSON, or --text for plain text)
+        XPost {
+            id: String,
+            /// print only the readable text, not JSON (AI-friendly)
+            #[arg(long)]
+            text: bool,
+        },
         /// Multi-engine search (SearXNG -> DDG -> Bing)
         Search {
             query: String,
@@ -2061,6 +2130,14 @@ mod cli {
                     "captcha_tech": tech, "sitekeys": keys,
                     "walled": crate::captcha::is_walled(page.status, &page.body),
                 })).unwrap());
+            }
+            Cmd::XPost { id, text } => {
+                let post = agent.x_post_by_id(&id).await?;
+                if text {
+                    println!("{}", post["text"].as_str().unwrap_or(""));
+                } else {
+                    println!("{}", serde_json::to_string_pretty(&post).unwrap());
+                }
             }
             Cmd::X { handle, limit } => {
                 let posts = agent.x_posts(&handle, limit).await?;

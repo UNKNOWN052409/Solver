@@ -62,6 +62,10 @@ ghostmouse sniff https://17.wtf
 # X posts without login (syndication -> nitter fallback chain)
 ghostmouse x elonmusk --limit 10
 
+# single X post by ID — full JSON or bare text (AI-friendly)
+ghostmouse x-post 2094130588047266206
+ghostmouse x-post 2094130588047266206 --text
+
 # live captcha battery: 10 demo/real sites, wide tech detect
 ghostmouse battery
 ghostmouse battery --filter 2captcha            # subset
@@ -106,6 +110,24 @@ x-rate-limit-reset) -> rss.xcancel.com dedicated RSS host (plain TLS +
 RSS-reader UA — the host 400s/403s browser-shaped clients; its anti-abuse
 whitelist notice is filtered, never surfaces as a post) -> nitter HTML ->
 nitter RSS across 6 instances. One dead endpoint never kills the read.
+
+## X as an API (agents read every post)
+
+Single posts: `cdn.syndication.twimg.com/tweet-result?id=<ID>` serves
+full tweet JSON to any client — no login, plain TLS. `x-post <ID>`
+normalizes it (id, text, created, likes, rts, replies, author, handle,
+verified, photos, reply_to).
+
+Three consumption surfaces, all live-verified:
+
+- CLI: `ghostmouse x-post <ID> [--text]`
+- Drive API: `{"op": "xpost", "id": "<ID>"}` over JSONL/TCP
+- REST: `GET /x/handle/<handle>?limit=N` and `GET /x/post/<ID>?text=true`
+  on the Python solver server (port 8010; same X-API-Key auth as the
+  solve endpoints when SOLVER_API_KEY is set)
+
+Timeline -> feed every post ID to agents; each ID then resolves via
+x-post. Reading is login-free by design; nothing here posts or DMs.
 ```
 
 Global flags: `--user` (identity), `--proxy http/socks5://[user:pass@]host:port`,

@@ -11,6 +11,8 @@ Endpoints:
     POST /solve/image64             {"image_b64": "...", "engine": "slot"}
     POST /solve/audio               {"audio_b64": "...", "src_ext": ".mp3"}
     GET  /probe?url=<target>        fingerprint captcha tech on any page
+    GET  /x/handle/{handle}         X timeline without login (posts JSON)
+    GET  /x/post/{id}?text=true     single X post by ID (AI-readable)
     POST /solve/service             2captcha-style external solver passthrough
                                      {"kind": "recaptcha|hcaptcha|image",
                                       "sitekey": "...", "pageurl": "...",
@@ -20,6 +22,7 @@ Endpoints:
 import base64
 import os
 import re
+import subprocess
 from pathlib import Path
 
 import cv2
@@ -170,6 +173,72 @@ def health():
         "model_dir": str(MODEL_DIR),
         "auth": bool(os.environ.get("SOLVER_API_KEY", "")),
     }
+
+
+# ---------------------------------------------------------------- X reading
+
+# Login-free X readers exposed as REST so any AI agent can consume them
+# with plain HTTP. Backed by the live-verified endpoints:
+#   timeline: syndication.twitter.com __NEXT_DATA__ (+ fallbacks)
+#   single:  cdn.syndication.twimg.com/tweet-result (JSON, no login)
+# The GhostMouse Rust binary is the engine when available (it owns the
+# fallback chain); this is the HTTP face for agents.
+
+GHOSTMOUSE = os.environ.get("GHOSTMOUSE_BIN", "target/release/ghostmouse")
+
+
+def _gm_raw(*args, timeout=90):
+    """Run ghostmouse, return raw stdout text (no JSON parse)."""
+    binpath = _gm_bin()
+    try:
+        r = subprocess.run([binpath, *args], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="ghostmouse timed out")
+    if r.returncode != 0:
+        raise HTTPException(status_code=502, detail=r.stderr.strip()[:300] or "empty output")
+    return r.stdout.strip()
+
+
+def _gm(*args, timeout=90):
+    """Run ghostmouse CLI, return parsed JSON (or raise with stderr)."""
+    import json as _json
+    binpath = _gm_bin()
+    try:
+        r = subprocess.run([binpath, *args], capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="ghostmouse timed out")
+    out = r.stdout.strip()
+    if r.returncode != 0 or not out:
+        raise HTTPException(status_code=502, detail=r.stderr.strip()[:300] or "empty output")
+    try:
+        return _json.loads(out)
+    except ValueError:
+        raise HTTPException(status_code=502, detail="unparseable ghostmouse output")
+
+
+def _gm_bin():
+    binpath = GHOSTMOUSE if os.path.exists(GHOSTMOUSE) else os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "target", "release", "ghostmouse")
+    if not os.path.exists(binpath):
+        raise HTTPException(status_code=503, detail="ghostmouse binary not built")
+    return binpath
+
+
+@app.get("/x/handle/{handle}", dependencies=[Depends(require_key)])
+def x_handle(handle: str, limit: int = 20):
+    """Timeline for a handle: GET /x/handle/elonmusk?limit=20"""
+    return {"ok": True, "handle": handle, "posts": _gm("x", handle, str(limit))}
+
+
+@app.get("/x/post/{post_id}", dependencies=[Depends(require_key)])
+def x_post(post_id: str, text: bool = False):
+    """Single post by ID: GET /x/post/2094130588047266206?text=true"""
+    if text:
+        # --text prints bare prose (not JSON) — return it as a string
+        out = _gm_raw("x-post", post_id, "--text")
+        return {"ok": True, "text": out}
+    return {"ok": True, "post": _gm("x-post", post_id)}
 
 
 @app.post("/solve/image", dependencies=[Depends(require_key)])
