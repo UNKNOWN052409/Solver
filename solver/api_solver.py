@@ -58,6 +58,55 @@ class TwoCaptchaSolver:
         )
         return self._poll(task_id)
 
+    def solve_recaptcha_v3(
+        self,
+        sitekey: str,
+        pageurl: str,
+        action: str = "",
+        min_score: float = 0.4,
+        enterprise: bool = False,
+    ) -> str:
+        """reCAPTCHA v3 / Enterprise (score-based, action-scoped).
+
+        v3 tokens carry a score + action; sites like arena.ai validate
+        the action string (e.g. ``chat_submit``) server-side, so the
+        solving farm must mint the token with the same action.
+        Enterprise v3 uses the same protocol with ``enterprise=1``
+        (2captcha) — pass the enterprise sitekey as usual.
+        """
+        params = {
+            "method": "userrecaptcha",
+            "googlekey": sitekey,
+            "pageurl": pageurl,
+            "version": "v3",
+            "min_score": min_score,
+        }
+        if action:
+            params["action"] = action
+        if enterprise:
+            params["enterprise"] = 1
+        task_id = self._submit(params)
+        return self._poll(task_id)
+
+    def solve_recaptcha_enterprise(
+        self,
+        sitekey: str,
+        pageurl: str,
+        action: str = "",
+        min_score: float = 0.4,
+    ) -> str:
+        """reCAPTCHA Enterprise (grecaptcha.enterprise.execute)."""
+        return self.solve_recaptcha_v3(
+            sitekey, pageurl, action=action, min_score=min_score, enterprise=True
+        )
+
+    def solve_turnstile(self, sitekey: str, pageurl: str) -> str:
+        """Cloudflare Turnstile widget -> cf-turnstile-response token."""
+        task_id = self._submit(
+            {"method": "turnstile", "sitekey": sitekey, "pageurl": pageurl}
+        )
+        return self._poll(task_id)
+
     def solve_hcaptcha(self, sitekey: str, pageurl: str) -> str:
         """hCaptcha -> response token."""
         task_id = self._submit(

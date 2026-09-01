@@ -59,12 +59,14 @@ class AudioRequest(BaseModel):
 
 
 class ServiceRequest(BaseModel):
-    kind: str  # recaptcha | hcaptcha | image | cloudflare
+    kind: str  # recaptcha | recaptcha-v3 | recaptcha-enterprise | hcaptcha | image | cloudflare | turnstile
     sitekey: str = ""
     pageurl: str = ""
     image_b64: str = ""
     proxy: str = ""
     phrase: bool = False
+    action: str = ""   # recaptcha v3/enterprise action scope (e.g. chat_submit)
+    min_score: float = 0.4
 
 
 # ---------------------------------------------------------------- auth
@@ -301,9 +303,21 @@ def probe(url: str):
     if "challenges.cloudflare.com/turnstile" in html or ts_keys:
         found["tech"].append("cloudflare-turnstile")
         found["sitekeys"]["turnstile"] = sorted(set(ts_keys))
-    if "google.com/recaptcha" in html or "g-recaptcha" in html:
+    # reCAPTCHA v3/Enterprise: script render=KEY + grecaptcha.enterprise
+    # inline execute calls (arena-style: execute('KEY', {action: '...'}))
+    v3_keys = re.findall(r"recaptcha(?:/enterprise)?\.js\?render=([0-9A-Za-z_-]{20,})", html)
+    ent_exec = re.findall(r"grecaptcha\.enterprise\.execute\(\s*['\"]([0-9A-Za-z_-]{20,})['\"]", html)
+    plain_exec = re.findall(r"grecaptcha\.execute\(\s*['\"]([0-9A-Za-z_-]{20,})['\"]", html)
+    if "google.com/recaptcha" in html or "g-recaptcha" in html or "grecaptcha" in html:
         found["tech"].append("recaptcha")
-        found["sitekeys"]["recaptcha"] = sorted(set(rec_keys))
+        found["sitekeys"]["recaptcha"] = sorted(set(rec_keys + v3_keys + plain_exec))
+    if "grecaptcha.enterprise" in html or v3_keys and "enterprise" in html:
+        found["tech"].append("recaptcha-enterprise")
+        found["sitekeys"]["recaptcha-enterprise"] = sorted(set(v3_keys + ent_exec))
+    # action scopes from execute calls (arena: chat_submit, create_evaluation)
+    actions = re.findall(r"grecaptcha(?:\.enterprise)?\.execute\([^)]*?\{\s*action:\s*['\"]([a-z_]+)['\"]", html)
+    if actions:
+        found["actions"] = sorted(set(actions))
     if "hcaptcha.com" in html or "h-captcha" in html or "hcaptcha_token" in html:
         found["tech"].append("hcaptcha")
         found["sitekeys"]["hcaptcha"] = sorted(set(hc_keys + [k for k in js_keys if "-" in k and len(k) == 36]))
@@ -326,6 +340,14 @@ def solve_service(req: ServiceRequest, x_2captcha_key: str = Header(default=""))
     try:
         if req.kind == "recaptcha":
             return {"kind": req.kind, "token": svc.solve_recaptcha_v2(req.sitekey, req.pageurl)}
+        if req.kind == "recaptcha-v3":
+            return {"kind": req.kind, "token": svc.solve_recaptcha_v3(
+                req.sitekey, req.pageurl, action=req.action, min_score=req.min_score)}
+        if req.kind == "recaptcha-enterprise":
+            return {"kind": req.kind, "token": svc.solve_recaptcha_enterprise(
+                req.sitekey, req.pageurl, action=req.action, min_score=req.min_score)}
+        if req.kind == "turnstile":
+            return {"kind": req.kind, "token": svc.solve_turnstile(req.sitekey, req.pageurl)}
         if req.kind == "hcaptcha":
             return {"kind": req.kind, "token": svc.solve_hcaptcha(req.sitekey, req.pageurl)}
         if req.kind == "image":

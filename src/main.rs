@@ -1348,6 +1348,18 @@ mod captcha {
         {
             found.push("recaptcha");
         }
+        // reCAPTCHA v3 / Enterprise — inline grecaptcha.enterprise.execute
+        // (arena-style action-scoped tokens) or enterprise.js render keys.
+        if h.contains("grecaptcha.enterprise")
+            || h.contains("recaptcha/enterprise.js")
+            || h.contains("recaptcha/enterprise.js")
+        {
+            found.push("recaptcha-enterprise");
+        } else if h.contains("recaptcha/api.js?render=")
+            || h.contains("grecaptcha.execute(")
+        {
+            found.push("recaptcha-v3");
+        }
         if h.contains("Just a moment") || h.contains("cf-chl") || h.contains("challenge-platform") {
             found.push("cf-managed-challenge");
         }
@@ -1434,16 +1446,55 @@ mod captcha {
     /// SvelteKit/Next env objects, generic sitekey assignments).
     pub fn sitekeys(page_html: &str) -> Vec<String> {
         let mut keys: Vec<String> = Vec::new();
-        // attribute form
+        // data-sitekey attribute (classic widget form)
         let mut rest = page_html;
         while let Some(i) = rest.find("data-sitekey=\"") {
             rest = &rest[i + 15..];
             if let Some(j) = rest.find('"') {
                 let k = rest[..j].to_string();
-                if !keys.contains(&k) {
+                if !k.is_empty() && !keys.contains(&k) {
                     keys.push(k);
                 }
                 rest = &rest[j..];
+            }
+        }
+        // reCAPTCHA v3/Enterprise render key: recaptcha(.js|/enterprise.js)?render=KEY
+        let mut rest = page_html;
+        while let Some(i) = rest.find("render=") {
+            rest = &rest[i + 7..];
+            let cand: String = rest.chars().take(80).collect();
+            // key = [0-9A-Za-z_-]{20,}, terminated by & " ' or end
+            let end = cand
+                .find(|c: char| c == '&' || c == '"' || c == '\'' || c == ' ')
+                .unwrap_or(cand.len());
+            let k = &cand[..end];
+            if k.len() >= 20
+                && !k.ends_with("-shim")
+                && !k.contains("ready-shim")
+                && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                && !keys.contains(&k.to_string())
+            {
+                keys.push(k.to_string());
+            }
+            rest = &rest[1..];
+        }
+        // grecaptcha(.enterprise)?.execute('KEY', {action}) inline calls
+        for marker in ["grecaptcha.enterprise.execute('", "grecaptcha.enterprise.execute(\"", "grecaptcha.execute('", "grecaptcha.execute(\""] {
+            let mut rest = page_html;
+            while let Some(i) = rest.find(marker) {
+                rest = &rest[i + marker.len()..];
+                let cand: String = rest.chars().take(80).collect();
+                let end = cand
+                    .find(|c: char| c == '\'' || c == '"')
+                    .unwrap_or(cand.len());
+                let k = &cand[..end];
+                if k.len() >= 20
+                    && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+                    && !keys.contains(&k.to_string())
+                {
+                    keys.push(k.to_string());
+                }
+                rest = &rest[1..];
             }
         }
         // JS env form (SvelteKit PUBLIC_HCAPTCHA_SITE_KEY etc.) + generic
@@ -1456,6 +1507,7 @@ mod captcha {
                     let key = window[colon + 3..colon + 3 + end].to_string();
                     let name_up = window[..colon].to_ascii_uppercase();
                     if key.len() >= 20
+                        && !key.contains("-shim")
                         && (name_up.contains("HCAPTCHA")
                             || name_up.contains("RECAPTCHA")
                             || name_up.contains("TURNSTILE")
@@ -1474,7 +1526,10 @@ mod captcha {
 
     /// Hand a detected challenge to the Python solver API.
     /// POST {api}/solve/service with X-API-Key + X-2Captcha-Key headers.
-    /// kind: hcaptcha | recaptcha | cloudflare
+    /// kind: hcaptcha | recaptcha | recaptcha-v3 | recaptcha-enterprise |
+    ///       cloudflare | turnstile
+    /// action/min_score: recaptcha v3/enterprise ke liye (arena-style
+    /// action-scoped tokens, e.g. action="chat_submit").
     pub async fn solve_via_api(
         api: &str,
         api_key: &str,
@@ -1482,17 +1537,26 @@ mod captcha {
         kind: &str,
         sitekey: &str,
         pageurl: &str,
+        action: &str,
+        min_score: f64,
     ) -> Result<Value, String> {
         let client = rquest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .build()
             .map_err(|e| e.to_string())?;
+        let mut body = serde_json::json!({
+            "kind": kind, "sitekey": sitekey, "pageurl": pageurl
+        });
+        if !action.is_empty() {
+            body["action"] = serde_json::Value::String(action.to_string());
+        }
+        if min_score > 0.0 {
+            body["min_score"] = serde_json::Value::from(min_score);
+        }
         let mut req = client
             .post(format!("{api}/solve/service"))
             .header("X-API-Key", api_key)
-            .json(&serde_json::json!({
-                "kind": kind, "sitekey": sitekey, "pageurl": pageurl
-            }));
+            .json(&body);
         if !twocaptcha_key.is_empty() {
             req = req.header("X-2Captcha-Key", twocaptcha_key);
         }
@@ -1648,6 +1712,8 @@ mod battery {
                         kind,
                         &sitekey,
                         url,
+                        "",
+                        0.0,
                     )
                     .await
                     {
@@ -1848,8 +1914,20 @@ mod server {
                 let kind = match tech[0] {
                     "cloudflare-turnstile" | "cf-managed-challenge" => "cloudflare",
                     "hcaptcha" => "hcaptcha",
+                    "recaptcha-enterprise" => "recaptcha-enterprise",
+                    "recaptcha-v3" => "recaptcha-v3",
+                    "recaptcha" => "recaptcha",
                     _ => "recaptcha",
                 };
+                let action = req
+                    .get("action")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let min_score = req
+                    .get("min_score")
+                    .and_then(|x| x.as_f64())
+                    .unwrap_or(0.4);
                 match crate::captcha::solve_via_api(
                     &api,
                     &api_key,
@@ -1857,6 +1935,8 @@ mod server {
                     kind,
                     keys.first().map(|s| s.as_str()).unwrap_or(""),
                     &page.url,
+                    &action,
+                    min_score,
                 )
                 .await
                 {
@@ -2041,6 +2121,12 @@ mod cli {
             key: String,
             #[arg(long, default_value = "")]
             twocaptcha: String,
+            /// recaptcha v3/enterprise action scope (e.g. chat_submit)
+            #[arg(long)]
+            action: Option<String>,
+            /// minimum v3 score (default 0.4)
+            #[arg(long)]
+            min_score: Option<f64>,
         },
         /// Solve a captcha image file via the solver API
         SolveImage {
@@ -2151,7 +2237,7 @@ mod cli {
                     .collect();
                 println!("{}", serde_json::to_string_pretty(&out).unwrap());
             }
-            Cmd::Solve { url, api, key, twocaptcha } => {
+            Cmd::Solve { url, api, key, twocaptcha, action, min_score } => {
                 let page = agent.get(&url).await?;
                 let tech = crate::captcha::detect(&page.body);
                 if tech.is_empty() {
@@ -2161,12 +2247,17 @@ mod cli {
                 let kind = match tech[0] {
                     "cloudflare-turnstile" | "cf-managed-challenge" => "cloudflare",
                     "hcaptcha" => "hcaptcha",
+                    "recaptcha-enterprise" => "recaptcha-enterprise",
+                    "recaptcha-v3" => "recaptcha-v3",
+                    "recaptcha" => "recaptcha",
                     _ => "recaptcha",
                 };
                 let out = crate::captcha::solve_via_api(
                     &api, &key, &twocaptcha, kind,
                     keys.first().map(|s| s.as_str()).unwrap_or(""),
                     &page.url,
+                    action.as_deref().unwrap_or(""),
+                    min_score.unwrap_or(0.4),
                 )
                 .await?;
                 println!("{}", serde_json::to_string_pretty(&out).unwrap());
