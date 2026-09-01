@@ -3,6 +3,10 @@
 For captcha families you can't crack locally (reCAPTCHA v2/v3, hCaptcha,
 Turnstile, enterprise image grids): ship the task to a human-power farm
 and get a token back. Standard in.php/res.php protocol.
+
+NOTE: this module must stay importable in the pure-python "requests
+tier" (no cv2/numpy) — see tests/test_mobile_compat.py. The local
+ensemble OCR engine lives in solver/engines/ensemble_engine.py.
 """
 
 import base64
@@ -106,6 +110,57 @@ class TwoCaptchaSolver:
             {"method": "turnstile", "sitekey": sitekey, "pageurl": pageurl}
         )
         return self._poll(task_id)
+
+    def solve_geetest(self, gt: str, challenge: str, pageurl: str) -> str:
+        """GeeTest v3/v4 (slider) -> challenge/validate token.
+
+        `gt` + `challenge` page ke initGeetest(...) JS call se milte hain —
+        server.py /inspect dono extract karta hai.
+        """
+        task_id = self._submit(
+            {"method": "geetest", "gt": gt, "challenge": challenge,
+             "pageurl": pageurl}
+        )
+        return self._poll(task_id)
+
+    def solve_funcaptcha(self, publickey: str, pageurl: str,
+                         surl: str = "") -> str:
+        """FunCaptcha / Arkose (Netflix-class logins) -> token."""
+        params = {"method": "funcaptcha", "publickey": publickey,
+                  "pageurl": pageurl}
+        if surl:
+            params["surl"] = surl
+        task_id = self._submit(params)
+        return self._poll(task_id)
+
+    def solve_datadome(self, pageurl: str, proxy: str,
+                       user_agent: str, captcha_url: str) -> dict:
+        """DataDome interstitial (Amazon-class) -> datadome cookie.
+
+        A service worker solves through `proxy` and returns the datadome
+        cookie bound to that exit IP — replay it on requests from the
+        same proxy.
+        """
+        host, port, user, password = self._split_proxy(proxy)
+        if not user:
+            raise ValueError("authenticated proxy required (user:pass@host:port)")
+        task = {
+            "type": "AntiDataDomeTask",
+            "websiteURL": pageurl,
+            "captchaURL": captcha_url,
+            "proxyType": "http",
+            "proxyAddress": host,
+            "proxyPort": int(port),
+            "proxyLogin": user,
+            "proxyPassword": password,
+            "userAgent": user_agent,
+        }
+        solution = self._poll_task(self._create_task(task))
+        return {
+            "datadome": solution.get("cookie", ""),
+            "user_agent": solution.get("userAgent", user_agent),
+            "solution": solution,
+        }
 
     def solve_hcaptcha(self, sitekey: str, pageurl: str) -> str:
         """hCaptcha -> response token."""

@@ -38,6 +38,7 @@ def build_engine(a):
     from solver.engines.cnn_engine import CNNEngine
     from solver.engines.slot_engine import SlotEngine
     from solver.engines.tesseract_engine import TesseractEngine
+    from solver.engines.ensemble_engine import EnsembleEngine
 
     if a.engine == "cnn":
         return CNNEngine(a.model)
@@ -45,11 +46,13 @@ def build_engine(a):
         return SlotEngine(a.model, x0=a.slot_x0, x1=a.slot_x1, n_chars=a.slot_n)
     if a.engine == "tesseract":
         return TesseractEngine()
+    if a.engine == "ensemble":
+        return EnsembleEngine()
     # auto
     if CNNEngine.available(a.model):
         return CNNEngine(a.model)
     if TesseractEngine().available():
-        return TesseractEngine()
+        return EnsembleEngine()  # multi-variant voting beats single-pass
     sys.exit(
         "[!] No engine available. Either:\n"
         "    - install tesseract:  sudo apt-get install tesseract-ocr\n"
@@ -233,7 +236,7 @@ def main():
 
     s = sub.add_parser("solve", help="solve an image captcha locally")
     s.add_argument("image")
-    s.add_argument("--engine", choices=["auto", "tesseract", "cnn", "slot"], default="auto")
+    s.add_argument("--engine", choices=["auto", "tesseract", "ensemble", "cnn", "slot"], default="auto")
     s.add_argument("--model", default="model.pt")
     s.add_argument("--slot-x0", type=int, default=11, help="glyph band start (81px ref)")
     s.add_argument("--slot-x1", type=int, default=69, help="glyph band end (81px ref)")

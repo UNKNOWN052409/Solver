@@ -2012,6 +2012,61 @@ mod server {
                 "total_requests": a.total_requests,
                 "blocked_trackers": a.blocked_trackers,
             }),
+            // rev — one-shot reverse-engineering read for AI agents:
+            // links + forms + meta + api endpoints + JS api keys + captcha
+            // tech + walled status, sab ek call me.
+            "rev" => {
+                let url = req.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                if url.is_empty() {
+                    return json!({ "ok": false, "error": "url required" });
+                }
+                match a.get(url).await {
+                    Ok(p) => {
+                        let walled = crate::captcha::is_walled(p.status, &p.body);
+                        let meta = crate::agent::Agent::meta(&p);
+                        let title = meta.get("title").cloned()
+                            .unwrap_or(serde_json::json!(""));
+                        // inline fetch("/...") + fetch(`/...`) URLs in page JS
+                        let mut eps: Vec<String> = Vec::new();
+                        let mut rest = p.body.as_str();
+                        while let Some(i) = rest.find("fetch(\"/") {
+                            rest = &rest[i + 8..];
+                            if let Some(j) = rest.find('"') {
+                                let ep = format!("/{}", &rest[..j]);
+                                if ep.len() > 3 && !eps.contains(&ep) {
+                                    eps.push(ep);
+                                }
+                                rest = &rest[j..];
+                            }
+                        }
+                        let mut rest2 = p.body.as_str();
+                        while let Some(i) = rest2.find("fetch(`/") {
+                            rest2 = &rest2[i + 8..];
+                            if let Some(j) = rest2.find('`') {
+                                let ep = format!("/{}", &rest2[..j]);
+                                if ep.len() > 3 && !eps.contains(&ep) {
+                                    eps.push(ep);
+                                }
+                                rest2 = &rest2[j..];
+                            }
+                        }
+                        json!({
+                            "ok": true,
+                            "url": p.url,
+                            "status": p.status,
+                            "walled": walled,
+                            "title": title,
+                            "captcha_tech": crate::captcha::detect(&p.body),
+                            "sitekeys": crate::captcha::sitekeys(&p.body),
+                            "links": crate::agent::Agent::links(&p),
+                            "forms": crate::agent::Agent::forms(&p),
+                            "meta": meta,
+                            "api_endpoints": eps,
+                        })
+                    }
+                    Err(e) => json!({ "ok": false, "error": e }),
+                }
+            }
             _ => json!({ "ok": false, "error": format!("unknown op: {op}") }),
         }
     }

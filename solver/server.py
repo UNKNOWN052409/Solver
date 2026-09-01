@@ -44,7 +44,7 @@ MODEL_DIR = Path(os.environ.get("SOLVER_MODEL_DIR", "."))
 
 class Image64Request(BaseModel):
     image_b64: str
-    engine: str = "auto"  # auto | tesseract | cnn | slot
+    engine: str = "auto"  # auto | tesseract | ensemble | cnn | slot
     model: str = "model.pt"
     slot_x0: int = 11
     slot_x1: int = 69
@@ -67,6 +67,13 @@ class ServiceRequest(BaseModel):
     phrase: bool = False
     action: str = ""   # recaptcha v3/enterprise action scope (e.g. chat_submit)
     min_score: float = 0.4
+    # geetest / funcaptcha / datadome extras
+    gt: str = ""            # geetest gt key
+    challenge: str = ""     # geetest challenge
+    publickey: str = ""     # funcaptcha public key
+    surl: str = ""          # funcaptcha surl (optional)
+    user_agent: str = ""   # datadome
+    captcha_url: str = ""   # datadome
 
 
 # ---------------------------------------------------------------- auth
@@ -111,6 +118,9 @@ def get_engine(name: str, model: str, slot_x0=11, slot_x1=69, slot_n=4):
     if name == "tesseract":
         from .engines.tesseract_engine import TesseractEngine
         eng = TesseractEngine()
+    elif name == "ensemble":
+        from .engines.ensemble_engine import EnsembleEngine
+        eng = EnsembleEngine()
     elif name == "cnn":
         from .engines.cnn_engine import CNNEngine
         eng = CNNEngine(str(MODEL_DIR / model))
@@ -139,12 +149,15 @@ def solve_image_bytes(data: bytes, engine="auto", model="model.pt",
     if arr is None:
         raise HTTPException(status_code=400, detail="not a decodable image")
     if engine == "auto":
-        # prefer tesseract if binary present, else cnn/slot if model exists
+        # prefer ensemble (multi-variant voting) when tesseract is usable,
+        # else cnn/slot if model exists
         from .engines.tesseract_engine import TesseractEngine
-        eng_name = "tesseract" if TesseractEngine().available() else "cnn"
-        if eng_name == "cnn" and not (MODEL_DIR / model).exists():
-            raise HTTPException(status_code=503, detail="no tesseract binary and no model file")
-        engine = eng_name
+        if TesseractEngine().available():
+            engine = "ensemble"
+        else:
+            engine = "cnn"
+            if not (MODEL_DIR / model).exists():
+                raise HTTPException(status_code=503, detail="no tesseract binary and no model file")
     eng = get_engine(engine, model, slot_x0, slot_x1, slot_n)
     if getattr(eng, "wants_binary", True):
         arr = Preprocessor(remove_lines=remove_lines).run(arr)
@@ -156,21 +169,33 @@ def solve_image_bytes(data: bytes, engine="auto", model="model.pt",
 @app.get("/health")
 def health():
     tess = False
+    tess_src = "missing"
     try:
         from .engines.tesseract_engine import TesseractEngine
+        tess_src = TesseractEngine.binary_source()
         tess = TesseractEngine().available()
     except Exception:
         pass
+    # "green" = the binary actually OCRs: a userland tree can have the
+    # binary present but broken libs/tessdata — probe before promising.
+    if tess:
+        try:
+            from .engines.tesseract_engine import TesseractEngine
+            tess = TesseractEngine().diagnose().get("probe_ok", False)
+        except Exception:
+            tess = False
     models = sorted(p.name for p in MODEL_DIR.glob("*.pt")) if MODEL_DIR.is_dir() else []
     return {
         "ok": True,
         "engines": {
             "tesseract": tess,
+            "ensemble": tess,  # multi-variant voting needs the same binary
             "cnn": bool(models),
             "slot": bool(models),
             "audio": AudioEngine().available(),
             "service": True,  # TwoCaptcha passthrough always wired
         },
+        "tesseract_source": tess_src,  # system | userland | missing
         "models": models,
         "model_dir": str(MODEL_DIR),
         "auth": bool(os.environ.get("SOLVER_API_KEY", "")),
@@ -318,6 +343,23 @@ def probe(url: str):
     actions = re.findall(r"grecaptcha(?:\.enterprise)?\.execute\([^)]*?\{\s*action:\s*['\"]([a-z_]+)['\"]", html)
     if actions:
         found["actions"] = sorted(set(actions))
+    if "geetest" in html or "initGeetest" in html or "gt.js" in html:
+        found["tech"].append("geetest")
+        gts = re.findall(r"initGeetest\s*\(\s*['\"](\w+)['\"]", html)
+        gts += re.findall(r"gt\s*[:=]\s*['\"](\w{20,})['\"]", html)
+        chs = re.findall(r"challenge\s*[:=]\s*['\"]([0-9a-f]{32})['\"]", html)
+        if gts:
+            found["sitekeys"]["geetest-gt"] = sorted(set(gts))
+        if chs:
+            found["sitekeys"]["geetest-challenge"] = sorted(set(chs))
+    if "funcaptcha" in html or "arkose" in html or "challenge.arkoselabs" in html:
+        found["tech"].append("funcaptcha")
+        fks = re.findall(r"[\"']public_?key[\"']\s*[:=]\s*[\"']([0-9A-Fa-f-]{20,})[\"']", html)
+        fks += re.findall(r"arkoselabs\.com/v[0-9]/([0-9A-Fa-f-]{20,})", html)
+        if fks:
+            found["sitekeys"]["funcaptcha-publickey"] = sorted(set(fks))
+    if "datadome" in html or "captcha-delivery.com" in html:
+        found["tech"].append("datadome")
     if "hcaptcha.com" in html or "h-captcha" in html or "hcaptcha_token" in html:
         found["tech"].append("hcaptcha")
         found["sitekeys"]["hcaptcha"] = sorted(set(hc_keys + [k for k in js_keys if "-" in k and len(k) == 36]))
@@ -348,6 +390,15 @@ def solve_service(req: ServiceRequest, x_2captcha_key: str = Header(default=""))
                 req.sitekey, req.pageurl, action=req.action, min_score=req.min_score)}
         if req.kind == "turnstile":
             return {"kind": req.kind, "token": svc.solve_turnstile(req.sitekey, req.pageurl)}
+        if req.kind == "geetest":
+            return {"kind": req.kind, "token": svc.solve_geetest(
+                req.gt or req.sitekey, req.challenge, req.pageurl)}
+        if req.kind == "funcaptcha":
+            return {"kind": req.kind, "token": svc.solve_funcaptcha(
+                req.publickey or req.sitekey, req.pageurl, req.surl)}
+        if req.kind == "datadome":
+            return {"kind": req.kind, **svc.solve_datadome(
+                req.pageurl, req.proxy, req.user_agent, req.captcha_url)}
         if req.kind == "hcaptcha":
             return {"kind": req.kind, "token": svc.solve_hcaptcha(req.sitekey, req.pageurl)}
         if req.kind == "image":

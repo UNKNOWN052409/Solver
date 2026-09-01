@@ -44,7 +44,7 @@ class TestHealth:
         assert r.status_code == 200
         body = r.json()
         assert body["ok"] is True
-        assert set(body["engines"]) == {"tesseract", "cnn", "slot", "audio", "service"}
+        assert set(body["engines"]) == {"tesseract", "ensemble", "cnn", "slot", "audio", "service"}
         assert body["auth"] is False
 
     def test_health_reports_auth(self, auth_client):
@@ -110,3 +110,110 @@ class TestProbe:
         html = 'env: {"PUBLIC_HCAPTCHA_SITE_KEY":"c040c4de-f62a-41ae-8e14-ee12ce846382"}'
         pat = r"""["'][A-Z_]*(?:HCAPTCHA|RECAPTCHA|TURNSTILE)[A-Z_]*["']\s*[:=]\s*["']([^"']+)["']"""
         assert re.findall(pat, html) == ["c040c4de-f62a-41ae-8e14-ee12ce846382"]
+
+
+class TestEnsembleEngine:
+    """4th engine: ensemble (red-channel isolation + weighted voting)."""
+
+    def test_ensemble_red_isolate_kills_colored_noise(self):
+        import numpy as np
+        from solver.engines.ensemble_engine import EnsembleEngine as EnsembleSolver
+
+        # BGR image: red glyph on white + blue noise blob
+        img = np.full((30, 60, 3), 255, dtype=np.uint8)
+        img[10:14, 5:25, 2] = 180   # red stroke (BGR: R=180, G=B=0)
+        img[10:14, 5:25, 0] = 0
+        img[10:14, 5:25, 1] = 0
+        img[20:28, 30:50, 0] = 220  # blue junk
+        out = EnsembleSolver._red_isolate(img)
+        assert out.shape == (30, 60)
+        # glyph pixels survive as black text
+        assert out[12, 15] == 0
+        # blue junk gone (white bg)
+        assert out[24, 40] == 255
+
+    def test_ensemble_vote_positional(self):
+        from solver.engines.ensemble_engine import EnsembleEngine as EnsembleSolver
+
+        es = EnsembleSolver()
+        # 4 variants; red psm7 (weight 1.2) + plain psm7 (1.0) agree on "ab"
+        raws = {
+            ("plain", 7): "ab",
+            ("plain", 13): "ax",
+            ("red", 7): "ab",
+            ("red", 13): "qb",
+        }
+        assert es.vote(raws) == "ab"
+
+    def test_ensemble_vote_majority_length(self):
+        from solver.engines.ensemble_engine import EnsembleEngine as EnsembleSolver
+
+        es = EnsembleSolver()
+        # most variants read 3 chars; one dropped a glyph
+        raws = {
+            ("plain", 7): "x7k",
+            ("plain", 13): "x7k",
+            ("red", 7): "x7k",
+            ("red", 13): "xk",
+        }
+        assert es.vote(raws) == "x7k"
+
+    def test_ensemble_vote_empty(self):
+        from solver.engines.ensemble_engine import EnsembleEngine as EnsembleSolver
+
+        assert EnsembleSolver().vote({}) == ""
+        assert EnsembleSolver().vote({("plain", 7): "", ("red", 7): ""}) == ""
+
+    def test_ensemble_registered_and_consistent(self, client):
+        """ensemble == tesseract availability: same binary, more passes."""
+        body = client.get("/health").json()
+        assert body["engines"]["ensemble"] == body["engines"]["tesseract"]
+
+    def test_solve_image64_accepts_ensemble_engine(self, client):
+        import base64
+
+        from solver.generator import CaptchaGenerator
+
+        img, _text = CaptchaGenerator(length=4).generate()
+        import io
+
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        r = client.post("/solve/image64", json={
+            "image_b64": base64.b64encode(buf.getvalue()).decode(),
+            "engine": "ensemble",
+        })
+        if r.status_code == 503:
+            pytest.skip("no tesseract binary on this host")
+        assert r.status_code == 200
+        assert r.json()["engine"] == "ensemble"
+        assert isinstance(r.json()["text"], str)
+
+
+class TestTesseractUserland:
+    """Userland /tmp/tessroot tree: direct-loader invocation + probing."""
+
+    def test_binary_source_reports_userland_or_system(self):
+        from solver.engines.tesseract_engine import TesseractEngine
+
+        src = TesseractEngine.binary_source()
+        assert src in ("system", "userland", "missing")
+        if src != "missing":
+            assert TesseractEngine().available() is True
+
+    def test_userland_diagnose_probe_ok(self):
+        from solver.engines.tesseract_engine import TesseractEngine
+
+        if TesseractEngine.binary_source() == "missing":
+            pytest.skip("no tesseract anywhere")
+        d = TesseractEngine().diagnose()
+        assert d["probe_ok"] is True, d
+
+    def test_health_tesseract_green_when_binary_works(self, client):
+        from solver.engines.tesseract_engine import TesseractEngine
+
+        if TesseractEngine.binary_source() == "missing":
+            pytest.skip("no tesseract anywhere")
+        body = client.get("/health").json()
+        assert body["engines"]["tesseract"] is True
+        assert body["tesseract_source"] in ("system", "userland")

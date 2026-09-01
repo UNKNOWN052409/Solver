@@ -43,7 +43,12 @@ def test_tesseract_engine_reports_availability():
     from solver.engines.tesseract_engine import TesseractEngine
 
     eng = TesseractEngine()
-    assert eng.available() == (shutil.which("tesseract") is not None)
+    # system binary OR userland tree (no-root installs, /tmp/tessroot)
+    if shutil.which("tesseract"):
+        assert eng.available() is True
+    else:
+        # userland fallback: available() iff the tree is usable
+        assert eng.available() == (eng.binary_source() == "userland")
 
 
 def test_cli_module_imports():
