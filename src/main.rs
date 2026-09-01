@@ -930,6 +930,30 @@ mod agent {
                 "https://nitter.privacyredirect.com",
                 "https://nitter.tie.hackerdairy.org",
             ];
+            // xcancel's dedicated RSS host serves real feeds when the
+            // client LOOKS like an RSS reader (any "compatible; RSS*"
+            // UA passes, browser UAs get the 400 "RSS client only" page).
+            // Verified live: rss.xcancel.com/<handle>/rss -> 200 + items.
+            for host in ["https://rss.xcancel.com", "https://nitter.net"] {
+                let rss = format!("{host}/{handle}/rss");
+                if let Ok(p) = get_rss(&rss).await {
+                    if p.status == 200 {
+                        let mut posts = parse_nitter_rss(&p.body, limit);
+                        // rss.xcancel serves an anti-abuse notice item
+                        // ("RSS reader not yet whitelisted!") to unknown
+                        // readers — it is never a real tweet, drop it
+                        posts.retain(|t| {
+                            !t.get("text").and_then(|x| x.as_str()).unwrap_or("")
+                                .contains("not yet whitelisted")
+                        });
+                        if !posts.is_empty() {
+                            return Ok(posts);
+                        }
+                        errs.push(format!("{host}/rss: no items"));
+                    }
+                }
+            }
+
             for base in INSTANCES {
                 // RSS first: instances under load serve an HTML shell but
                 // still 302->200 the RSS feed (verified live Aug 2026)
@@ -1162,6 +1186,32 @@ mod agent {
             .header("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
             .header("accept-language", "en-US,en;q=0.9")
             .header("referer", "https://platform.twitter.com/")
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        let status = resp.status().as_u16();
+        let headers: Vec<(String, String)> = resp
+            .headers()
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+            .collect();
+        let body = resp.text().await.map_err(|e| e.to_string())?;
+        Ok(Page { url: url.to_string(), status, body, headers })
+    }
+
+    /// RSS-host fetch: plain TLS (X 429s the emulated Chrome shape on
+    /// its own hosts) plus an RSS-reader UA — rss.xcancel.com 400s any
+    /// client that doesn't look like an RSS reader. Both verified live.
+    async fn get_rss(url: &str) -> Result<Page, String> {
+        let plain = rquest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .redirect(rquest::redirect::Policy::limited(10))
+            .build()
+            .map_err(|e| e.to_string())?;
+        let resp = plain
+            .get(url)
+            .header("user-agent", "Mozilla/5.0 (compatible; GhostMouseRSS/1.0; +https://github.com/UNKNOWN052409/Solver)")
+            .header("accept", "application/rss+xml, application/xml, text/xml, */*")
             .send()
             .await
             .map_err(|e| e.to_string())?;

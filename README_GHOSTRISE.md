@@ -102,8 +102,10 @@ funcaptcha/arkose, datadome, aws-waf, slider-captcha, image-captcha.
 ## X fallback chain
 
 syndication __NEXT_DATA__ (rate-limit-aware backoff honoring
-x-rate-limit-reset) -> nitter HTML -> nitter RSS across 6 instances.
-One dead endpoint never kills the read.
+x-rate-limit-reset) -> rss.xcancel.com dedicated RSS host (plain TLS +
+RSS-reader UA — the host 400s/403s browser-shaped clients; its anti-abuse
+whitelist notice is filtered, never surfaces as a post) -> nitter HTML ->
+nitter RSS across 6 instances. One dead endpoint never kills the read.
 ```
 
 Global flags: `--user` (identity), `--proxy http/socks5://[user:pass@]host:port`,
