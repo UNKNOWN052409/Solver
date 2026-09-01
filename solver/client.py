@@ -16,8 +16,27 @@ from pathlib import Path
 import requests
 
 
+def discover_url() -> str | None:
+    """Find the live Solver API via its discovery file — no hardcoded ports.
+
+    The launcher (solver.serve) publishes ~/.solver_api_port on every
+    (re)bind. Clients read it so port moves are invisible to them.
+    """
+    import json, os
+    p = Path(os.environ.get("SOLVER_DISCOVERY", "~/.solver_api_port")).expanduser()
+    try:
+        d = json.loads(p.read_text())
+        return d.get("url")
+    except Exception:
+        return None
+
+
 class SolverClient:
-    def __init__(self, base_url: str, api_key: str | None = None, timeout: float = 120):
+    def __init__(self, base_url: str | None = None, api_key: str | None = None,
+                 timeout: float = 120):
+        # base_url None -> auto-discover the live port (launcher published)
+        if base_url is None:
+            base_url = discover_url() or "http://127.0.0.1:8010"
         self.base = base_url.rstrip("/")
         self.timeout = timeout
         self.headers = {}

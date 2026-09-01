@@ -128,6 +128,28 @@ Three consumption surfaces, all live-verified:
 
 Timeline -> feed every post ID to agents; each ID then resolves via
 x-post. Reading is login-free by design; nothing here posts or DMs.
+
+## Solver API: auto-port + 24/7 (survives Android phantom-locks)
+
+Fixed ports die on Kali-on-Android (port 8000 sat phantom-locked for
+hours while no process held it). The launcher fixes that:
+
+    python -m solver.serve          # daemon + supervisor
+    python -m solver.serve --fg     # foreground debug
+    python -m solver.serve --port 9000
+
+- tries ports in order: 8010, 8000, 8011..8019 — skips busy/locked,
+  reuses a healthy running instance, binds the first free one
+- publishes the live port to `~/.solver_api_port` (discovery file)
+- supervises uvicorn: crash (rc!=0) or hang (port dead) -> respawn on
+  the first free port within ~30s. Warm-check avoids false kills
+  (uvicorn needs seconds to start; never health-kill before warm)
+- clients never hardcode ports: `SolverClient()` with no URL reads the
+  discovery file and follows wherever the API moved
+
+Live-verified: double-port-block (8010+8000) -> landed on 8011 with
+health + X API green; kill -9 on uvicorn -> respawned in seconds;
+watchdog block re-runs the launcher idempotently (exit 0 when alive).
 ```
 
 Global flags: `--user` (identity), `--proxy http/socks5://[user:pass@]host:port`,

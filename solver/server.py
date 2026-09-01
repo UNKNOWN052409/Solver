@@ -1,7 +1,7 @@
 """Hostable solve API (FastAPI). Deploy anywhere, use from anywhere.
 
-    uvicorn solver.server:app --host 0.0.0.0 --port 8000
-    # or: python -m solver.cli serve --port 8000
+    python -m solver.serve              # auto-port + 24/7 supervisor (preferred)
+    uvicorn solver.server:app --port 8000   # direct (fixed port)
 
 Optional auth: set env SOLVER_API_KEY=... and send header X-API-Key.
 
