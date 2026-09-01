@@ -70,17 +70,34 @@ class EnsembleEngine(BaseEngine):
         return binary
 
     def _variants(self, image: np.ndarray):
-        """Yield ((prep, psm), prepared_image, engine) for every pass."""
+        """Yield ((prep, psm), prepared_image, engine) for every pass.
+
+        Red-isolate passes are gated on measured redness: without real
+        red content the channel reads as junk and only pollutes the vote
+        (skipping them also halves latency on non-red captchas).
+        """
         from ..preprocessor import Preprocessor
         from .tesseract_engine import TesseractEngine
 
         plain = Preprocessor(scale=2.0).run(image)
-        red = self._red_isolate(image)
-        red = cv2.resize(red, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
-        for prep_label, img in (("plain", plain), ("red", red)):
+        passes = [("plain", plain)]
+        if self._red_signal(image) >= self.RED_SIGNAL_MIN_FRAC:
+            red = self._red_isolate(image)
+            red = cv2.resize(red, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC)
+            passes.append(("red", red))
+        for prep_label, img in passes:
             for psm in (7, 13):
                 yield (prep_label, psm), img, TesseractEngine(
                     charset=self.charset, psm=psm, oem=1)
+
+    @staticmethod
+    def _red_signal(img_bgr: np.ndarray) -> float:
+        """Fraction of pixels that are clearly red-dominant."""
+        if img_bgr.ndim == 2:
+            return 0.0
+        f = img_bgr.astype(np.int16)
+        redness = f[:, :, 2] - np.maximum(f[:, :, 0], f[:, :, 1])  # BGR: ch2=R
+        return float((redness > 40).mean())
 
     # ------------------------------------------------------------ solve
 
