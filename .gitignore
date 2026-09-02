@@ -16,3 +16,8 @@ libclang-*.whl
 
 # arena bridge runtime state — NEVER push
 arena_session.json
+
+# vosk models — badi files, kabhi push nahi
+vosk-models/
+vosk-model*/
+*.zip

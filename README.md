@@ -95,6 +95,35 @@ with UUIDv7 ids, `mode: battle|direct-battle`, `modelAId` = leaderboard uuid,
 (action `chat_submit`); SSE reply frames `a0:`/`b0:` carry model A/B deltas.
 Rate-limit aware (60s backoff + retry built in).
 
+## Keyless on-page captcha solving (`ghostrise/captcha_agent.py`)
+
+`solve_page_captcha(page, session)` — page ke andar hi widget solve karta
+hai, koi solving-API key nahi:
+
+- **reCAPTCHA v2** — humanized anchor click (live-proven: challenge
+  bframe trigger hota hai); audio->Vosk OCR fallback (vosk-model small
+  install karo; note: Google demo sitekeys pe audio option aksar disabled
+  hai); image-grid semantic solve ke liye vision classifier chahiye —
+  current CNN engine text-captchas ka hai
+- **reCAPTCHA v3 / Enterprise** — score-based, kuch click nahi hota;
+  GhostRise engine stealth (consistent persona, clean fingerprint) hi
+  pass hai; token-exists check built-in
+- **hCaptcha / Turnstile / AWS WAF** — checkbox click + token wait
+  (frames-loop + DOM iframe srcs dono se detect)
+- **Slider (GeeTest-class)** — bezier humanized drag (overshoot + jitter)
+
+Engine ladder (`GhostSession(engine="auto")`): CloakBrowser (best) ->
+playwright Firefox fallback — dono pe same page API, proot-safe
+(MOZ_DISABLE_CONTENT_SANDBOX auto-set).
+
+Demo battery honest scorecard (2captcha demo pages, Sep 2026): widget
+DETECT sab pe working (v2/v3/enterprise/turnstile/geetest/funcaptcha/
+datadome + sitekeys); full SOLVE — v2 checkbox click + bframe trigger
+live-proven; turnstile token-wait implemented; hcaptcha demo page pe
+widget hi load nahi hota (2captcha ne badla); v2 image-grid semantic
+solve aur v3 score hardening = agla iteration (needs vision classifier /
+trusted session-age).
+
 ## Library use
 
 ```python

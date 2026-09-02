@@ -48,7 +48,11 @@ def _vault_cookies(url: str) -> dict:
 
 
 class GhostSession:
-    """One browsing identity. Use as a context manager."""
+    """One browsing identity. Use as a context manager.
+
+    Engine ladder: CloakBrowser (best stealth) -> playwright Firefox
+    (fallback — jis host pe CloakBrowser nahi). Dono pe same page API.
+    """
 
     def __init__(
         self,
@@ -56,6 +60,7 @@ class GhostSession:
         proxy: str | None = None,
         headed: bool = False,
         humanize: bool = True,
+        engine: str = "auto",  # auto | cloak | playwright
         **extra_launch_kwargs,
     ):
         self.profile_name = profile
@@ -63,33 +68,55 @@ class GhostSession:
         self.proxy_url = _proxy_url(proxy)
         self.headed = headed
         self.humanize = humanize
+        self.engine_pref = engine
         self.extra_launch_kwargs = extra_launch_kwargs
         self._pw = None
         self.browser = None
+        self._ctx = None
 
     def __enter__(self):
-        try:
-            from cloakbrowser import launch
-        except ImportError as e:
-            raise RuntimeError(
-                "GhostRise needs the CloakBrowser engine on this host: "
-                "pip install cloakbrowser"
-            ) from e
+        # Engine 1: CloakBrowser (engine-level stealth)
+        if self.engine_pref in ("auto", "cloak"):
+            try:
+                from cloakbrowser import launch
+                kwargs = {
+                    "headless": not self.headed,
+                    "humanize": self.humanize,
+                    **self.extra_launch_kwargs,
+                }
+                if self.proxy_url:
+                    kwargs["proxy"] = self.proxy_url
+                try:
+                    self.browser = launch(**kwargs)
+                except TypeError:
+                    kwargs.pop("humanize", None)
+                    self.browser = launch(**kwargs)
+                return self
+            except ImportError:
+                if self.engine_pref == "cloak":
+                    raise RuntimeError("cloakbrowser requested but not installed")
+        # Engine 2: playwright Firefox fallback (MOZ sandbox off for proot)
+        import os
+        os.environ.setdefault("MOZ_DISABLE_CONTENT_SANDBOX", "1")
+        os.environ.setdefault("MOZ_DISABLE_GMP_SANDBOX", "1")
+        from playwright.sync_api import sync_playwright
 
-        kwargs = {
-            "headless": not self.headed,
-            "humanize": self.humanize,
-            **self.extra_launch_kwargs,
-        }
+        self._pw = sync_playwright().start()
+        launch_kw = {"headless": not self.headed}
         if self.proxy_url:
-            kwargs["proxy"] = self.proxy_url
-
-        try:
-            self.browser = launch(**kwargs)
-        except TypeError:
-            # Version drift: drop newer kwargs an older wrapper rejects.
-            kwargs.pop("humanize", None)
-            self.browser = launch(**kwargs)
+            # user:pass@host:port -> playwright proxy dict
+            import urllib.parse as _up
+            pu = _up.urlparse(self.proxy_url)
+            launch_kw["proxy"] = {
+                "server": f"{pu.scheme or 'http'}://{pu.hostname}:{pu.port}",
+                "username": pu.username or None,
+                "password": pu.password or None,
+            }
+        self._ctx = self._pw.firefox.launch(**launch_kw).new_context(
+            user_agent=self.profile.get("user_agent") or
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:131.0) "
+            "Gecko/20100101 Firefox/131.0")
+        self.browser = _PlaywrightCompat(self._ctx)
         return self
 
     def page(self, url: str | None = None):
@@ -99,10 +126,12 @@ class GhostSession:
             domain = urlparse(url).netloc
             vaulted = _vault_cookies(url).items()
             if vaulted:
-                self.browser.contexts[0].add_cookies(
-                    [{"name": n, "value": v, "domain": "." + domain, "path": "/"}
-                     for n, v in vaulted]
-                )
+                try:
+                    self.browser.contexts[0].add_cookies(
+                        [{"name": n, "value": v, "domain": "." + domain,
+                          "path": "/"} for n, v in vaulted])
+                except Exception:
+                    pass
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
         return page
 
@@ -113,12 +142,39 @@ class GhostSession:
         return HumanActions(page)
 
     def __exit__(self, *exc):
-        if self.browser:
+        if self._ctx:
+            try:
+                self._ctx.close()
+            except Exception:
+                pass
+        if self._pw:
+            try:
+                self._pw.stop()
+            except Exception:
+                pass
+        if self.browser and not isinstance(self.browser, _PlaywrightCompat):
             try:
                 self.browser.close()
             except Exception:
                 pass
         return False
+
+
+class _PlaywrightCompat:
+    """CloakBrowser-style surface over a playwright browser context."""
+
+    def __init__(self, ctx):
+        self.ctx = ctx
+        self.contexts = [ctx]
+
+    def new_page(self):
+        return self.ctx.new_page()
+
+    def close(self):
+        try:
+            self.ctx.close()
+        except Exception:
+            pass
 
 
 def open_url(url: str, profile: str = "default", proxy: str | None = None,
