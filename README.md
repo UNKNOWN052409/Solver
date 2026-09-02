@@ -166,6 +166,31 @@ lagaya hai (Sep 2026) jo CloakBrowser se bhi clear nahi hoti abhi;
 parser + wall-clear code ready hai, mirror khulega to live. Timeline
 chain (Rust: syndication -> xcancel RSS -> nitter) fully live.
 
+## Multi-session + power-efficient (Kali-on-Android/proot)
+
+3-4 parallel Hermes sessions ka budget math (Termux 32-child cap):
+har session ~4-5 procs (hermes + kernel + mcp_stdio_watchdog +
+mcp-proxy) -> 3 sessions = ~14, 4 = ~19; browsers 8+ EACH — isliye
+browser tests ke baad hamesha cleanup. Do guards hain:
+
+```bash
+python3 tools/capwatch.py          # live budget report (procs/headroom)
+python3 tools/capwatch.py --auto   # headroom <8 -> browsers cleanup, warna no-op
+python3 tools/procguard.py --kill  # full test-proc cleanup (protected safe)
+```
+
+- `capwatch.py` — power-efficient: koi daemon/polling nahi, cron me
+  5-min pe `--auto` (sirf zaroorat pe kaam). PROTECTED: hermes stack,
+  burp-mcp, searxng, prexzy, kanban — kabhi touch nahi hota.
+- `procguard.py` — test zombi cleanup (browsers, uvicorn, revd,
+  mitmdump, mocks) with same protected list.
+- Watchdog cron 1min -> **5min** (battery 5x, daemons 5-min max lag
+  tolerate karte hain).
+- Dead kanban workers: `hermes sessions archive --older-than 10h
+  --title kanban --yes` (reversible soft-hide) — DB list clean.
+- Rule of thumb: 4 sessions chal rahe hon to browser test pehle
+  capwatch dekho; 2 se kam headroom = pehle cleanup phir browser.
+
 ## Library use
 
 ```python
