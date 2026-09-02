@@ -21,3 +21,5 @@ arena_session.json
 vosk-models/
 vosk-model*/
 *.zip
+data/pt/
+data/tiles/

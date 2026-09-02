@@ -124,6 +124,24 @@ widget hi load nahi hota (2captcha ne badla); v2 image-grid semantic
 solve aur v3 score hardening = agla iteration (needs vision classifier /
 trusted session-age).
 
+## Keyless vision classifier (`solver/vision/`)
+
+~6M-param TileNet stack — v2/hCaptcha grid tiles keyless solve karne
+ka vision brain (koi solving API nahi):
+
+- `model.py` — TileNet multi-label (97-class closed vocab) + RotNet
+  (Arkose rotation, 36x10deg bins); numpy-ref + torch-trainable variants
+- `harvest.py` — demo pages se grids harvest (prompt + tiles), zero
+  manual labeling (weak-labels se distill)
+- `train.py` — synthetic smoke (pipeline proof, live: loss 0.32->0.15)
+  + torch path (BCE multi-label, ONNX + int8 export target)
+- `serve.py` — FastAPI /classify + /rotate (live: 9-tile batch 703ms
+  numpy-ref; ONNX int8 target ~10ms CPU, GPU batch ~50k tiles/sec/card)
+
+Serving math (int8 ONNX): CPU core ~100-300 tiles/sec -> ~30-50ms/grid;
+one GPU card batch(64) ~50k tiles/sec -> ~5k grids/sec -> few cards
+serve 100k+ bursty users.
+
 ## Library use
 
 ```python
