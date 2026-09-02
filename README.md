@@ -142,6 +142,30 @@ Serving math (int8 ONNX): CPU core ~100-300 tiles/sec -> ~30-50ms/grid;
 one GPU card batch(64) ~50k tiles/sec -> ~5k grids/sec -> few cards
 serve 100k+ bursty users.
 
+## Anti-captcha browser (`ghostrise/ac_browser.py`)
+
+`ACSession` — GhostSession ke upar wrapper jo har page ko
+"anti-captcha" banata hai. Agent code captcha ka dhyan rakhta hi nahi:
+
+```python
+from ghostrise.ac_browser import ACSession
+with ACSession(profile="work1") as b:
+    page = b.open("https://walled-site.com/login")   # wall/captcha auto
+    print(b.last_info)  # {wall: cleared/none, captcha: kind: result}
+```
+
+Ladder har URL pe: load -> JS-interstitial wall wait/reload (Just a
+moment / Verifying your browser class) -> captcha widget auto-solve
+(keyless stack: stealth clicks, OCR, vision hook) -> verify -> retry
+(max_retries). `b.last_info` me har attempt ka hisaab milta hai.
+
+X stack (ghostrise/x_agent.py): x_posts timeline (browser fallback jab
+Rust syndication chain IP-block ho), x_post single, x_search — honest
+note: public nitter mirrors ne SEARCH pe automated-verification wall
+lagaya hai (Sep 2026) jo CloakBrowser se bhi clear nahi hoti abhi;
+parser + wall-clear code ready hai, mirror khulega to live. Timeline
+chain (Rust: syndication -> xcancel RSS -> nitter) fully live.
+
 ## Library use
 
 ```python

@@ -408,6 +408,20 @@ mod search {
         href.to_string()
     }
 
+    /// URL-encode (query-string form: space -> +). X search ke liye.
+    fn urlenc(s: &str) -> String {
+        let mut out = String::new();
+        for b in s.bytes() {
+            match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
+                    | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+                b' ' => out.push('+'),
+                _ => out.push_str(&format!("%{:02X}", b)),
+            }
+        }
+        out
+    }
+
     fn percent_decode(s: &str) -> String {
         let bytes: Vec<u8> = s.as_bytes().to_vec();
         let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -985,6 +999,50 @@ mod agent {
                 }
             }
             Err(format!("all X sources failed: {}", errs.join("; ")))
+        }
+
+        /// Keyless X search — nitter instances ka /search?f=tweets&q=...
+        /// Same fallback-chain pattern as x_posts. Search keyword se
+        /// tweets nikaalta hai, no login. Author+text+date+link.
+        pub async fn x_search(&mut self, query: &str, limit: usize)
+            -> Result<Vec<Value>, String> {
+            fn urlenc_local(s: &str) -> String {
+                let mut out = String::new();
+                for b in s.bytes() {
+                    match b {
+                        b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'
+                            | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+                        b' ' => out.push('+'),
+                        _ => out.push_str(&format!("%{:02X}", b)),
+                    }
+                }
+                out
+            }
+            let mut errs: Vec<String> = Vec::new();
+            const SEARCH_HOSTS: &[&str] = &[
+                "https://xcancel.com",
+                "https://nitter.net",
+                "https://nitter.poast.org",
+                "https://lightbrd.com",
+                "https://nitter.privacyredirect.com",
+            ];
+            let q = urlenc_local(query);
+            for base in SEARCH_HOSTS {
+                let url = format!("{base}/search?f=tweets&q={q}");
+                match self.get(&url).await {
+                    Ok(p) if p.status == 200
+                        && p.body.contains("timeline-item") => {
+                        let posts = parse_nitter_html(&p.body, limit);
+                        if !posts.is_empty() {
+                            return Ok(posts);
+                        }
+                        errs.push(format!("{base}: no items"));
+                    }
+                    Ok(p) => errs.push(format!("{base}: status {}", p.status)),
+                    Err(e) => errs.push(format!("{base}: {e}")),
+                }
+            }
+            Err(format!("all X search sources failed: {}", errs.join("; ")))
         }
 
         /// Single X post by ID — the embed-widget JSON endpoint
@@ -1867,6 +1925,14 @@ mod server {
                     Err(e) => json!({ "ok": false, "error": e }),
                 }
             }
+            "x_search" => {
+                let q = req.get("query").and_then(|h| h.as_str()).unwrap_or("").to_string();
+                let limit = req.get("limit").and_then(|l| l.as_u64()).unwrap_or(20) as usize;
+                match a.x_search(&q, limit).await {
+                    Ok(posts) => json!({ "ok": true, "posts": posts }),
+                    Err(e) => json!({ "ok": false, "error": e }),
+                }
+            }
             "sniff" => {
                 let url = req.get("url").and_then(|u| u.as_str()).unwrap_or("");
                 if url.is_empty() {
@@ -2152,6 +2218,12 @@ mod cli {
         Sniff { url: String },
         /// Read X/Twitter posts without login
         X { handle: String, #[arg(default_value = "20")] limit: usize },
+        /// Keyless X search: keyword -> matching tweets (nitter chain)
+        XSearch {
+            query: String,
+            #[arg(default_value = "20")]
+            limit: usize,
+        },
         /// Read a single X post by ID (JSON, or --text for plain text)
         XPost {
             id: String,
@@ -2282,6 +2354,10 @@ mod cli {
             }
             Cmd::X { handle, limit } => {
                 let posts = agent.x_posts(&handle, limit).await?;
+                println!("{}", serde_json::to_string_pretty(&posts).unwrap());
+            }
+            Cmd::XSearch { query, limit } => {
+                let posts = agent.x_search(&query, limit).await?;
                 println!("{}", serde_json::to_string_pretty(&posts).unwrap());
             }
             Cmd::Search { query, limit, engine } => {
