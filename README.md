@@ -191,6 +191,26 @@ python3 tools/procguard.py --kill  # full test-proc cleanup (protected safe)
 - Rule of thumb: 4 sessions chal rahe hon to browser test pehle
   capwatch dekho; 2 se kam headroom = pehle cleanup phir browser.
 
+## Screen-off survival + session-kill prevention (`tools/keepalive.sh`)
+
+```bash
+bash tools/keepalive.sh start    # ON (idempotent) — ab har session ke saath
+bash tools/keepalive.sh status   # heartbeat age
+bash tools/keepalive.sh stop
+```
+
+proot me Termux wake-lock root ke bina direct nahi milta — isliye
+3-layer ladder:
+1. **Heartbeat daemon** (nice-19): har 30s touch — ProcessRecord
+   active rehta hai, phantom-kill delay. CPU ~0 (sleep 29 nibble —
+   benchmark-verified negligible).
+2. **Watchdog revive**: 5-min cron pe heartbeat >120s stale -> restart.
+3. **@reboot crontab**: reboot pe auto-start.
+
+One-time Termux-side (strongest layer, manual): Termux app me
+**Termux:Widget** ka "Acquire wake lock" toggle ON + Android Settings >
+Battery > Termux > **Unrestricted**. Phir ye proot layer backup hai.
+
 ## Library use
 
 ```python
