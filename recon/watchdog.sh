@@ -40,3 +40,33 @@ if ! alive http://127.0.0.1:8900/stats; then
     echo $! > /tmp/opencode/ghostpipe.pid
     log "ghostpipe revived (pid $(cat /tmp/opencode/ghostpipe.pid))"
 fi
+
+# ---- torbugbot : Telegram adaptive filter bot (02-Sep) ----
+# Liveness: bot.py khud apna PID bot.pid me likhta hai. Check = PID zinda + cmdline bot.py.
+TB_PIDFILE=/home/kali/Filtering/bot.pid
+TB_ALIVE=0
+if [ -f "$TB_PIDFILE" ]; then
+    TB_PID=$(cat "$TB_PIDFILE" 2>/dev/null)
+    if [ -n "$TB_PID" ] && [ -d "/proc/$TB_PID" ]; then
+        TB_CMD=$(tr '\0' ' ' < "/proc/$TB_PID/cmdline" 2>/dev/null)
+        case "$TB_CMD" in *bot.py*) TB_ALIVE=1;; esac
+    fi
+fi
+if [ "$TB_ALIVE" -eq 0 ]; then
+    log "torbugbot DOWN -> reviving"
+    ( cd /home/kali/Filtering
+      BOT_TOKEN="$(cat /home/kali/Filtering/bot.token)" \
+      nohup python3 bot.py >> /home/kali/Filtering/bot.log 2>&1 & )
+    sleep 5
+    for _i in 1 2 3; do
+        if [ -f "$TB_PIDFILE" ] && [ -d "/proc/$(cat $TB_PIDFILE 2>/dev/null)" ]; then
+            log "torbugbot revive OK (pid $(cat $TB_PIDFILE))"
+            exit_torbug=1
+            break
+        fi
+        sleep 2
+    done
+    if [ "${exit_torbug:-0}" -ne 1 ]; then
+        log "torbugbot revive FAILED — check /home/kali/Filtering/bot.log"
+    fi
+fi
