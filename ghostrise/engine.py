@@ -105,6 +105,24 @@ class GhostSession:
         self._ctx = None
 
     def __enter__(self):
+        # Engine 0: GhostWire — APNA raw-CDP engine (no playwright dep,
+        # no library CDP-pattern fingerprint). engine='wire' ya 'auto'
+        # me pehla nahi — CloakBrowser zyada battle-tested hai isliye
+        # auto me wire 2nd; explicit 'wire' pe primary.
+        if self.engine_pref in ("auto", "cloak", "wire"):
+            if self.engine_pref == "wire":
+                try:
+                    from ghostrise.wire import GhostWire
+                    kwargs = {"headless": not self.headed}
+                    if self.proxy_url:
+                        kwargs["extra_args"] = [
+                            f"--proxy-server={self.proxy_url.split('://')[-1]}"]
+                    self.wire = GhostWire(**kwargs)
+                    self.wire.launch()
+                    self.browser = _WireCompat(self.wire)
+                    return self
+                except Exception as e:
+                    raise RuntimeError(f"GhostWire launch fail: {e}")
         # Engine 1: CloakBrowser (engine-level stealth)
         if self.engine_pref in ("auto", "cloak"):
             try:
@@ -205,6 +223,60 @@ class _PlaywrightCompat:
             self.ctx.close()
         except Exception:
             pass
+
+
+class _WirePage:
+    """GhostWire page — GhostSession ke page-interface jaisa surface
+    (evaluate/title/text/mouse) taaki captcha_agent drop-in chale."""
+
+    def __init__(self, wire):
+        self.wire = wire
+
+    def goto(self, url, **kw):
+        self.wire.goto(url)
+        return self
+
+    def evaluate(self, expr, *a, **kw):
+        return self.wire.evaluate(expr)
+
+    @property
+    def title(self):
+        return self.wire.evaluate("document.title") or ""
+
+    @property
+    def url(self):
+        return self.wire.evaluate("location.href") or ""
+
+    def wait_for_timeout(self, ms):
+        time.sleep(ms / 1000)
+
+    @property
+    def mouse(self):
+        return self.wire.mouse
+
+
+class _WireCompat:
+    """GhostWire ko GhostSession browser-interface me adapt karta hai."""
+
+    def __init__(self, wire):
+        self.wire = wire
+        self._page = None
+
+    @property
+    def contexts(self):
+        class _C:
+            def add_cookies(self, *a, **kw):
+                pass
+        return [_C()]
+
+    def new_page(self):
+        if self._page is None:
+            self.wire._target()
+            self._page = _WirePage(self.wire)
+        return self._page
+
+    def close(self):
+        self.wire.close()
 
 
 def open_url(url: str, profile: str = "default", proxy: str | None = None,

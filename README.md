@@ -279,3 +279,31 @@ preprocessing pipeline and segmentation are shared by every local engine.
   Proxy pool (`solver/proxies.py`) isi use-case ke liye built hai.
 - 5sim API pe captcha NAHI hai (Bearer key) — buy/OTP direct API
   se hota hai, web login ki zaroorat hi nahi.
+
+## GhostWire — APNA engine layer (raw CDP, playwright-free) + WireMouse
+
+Solver ka ab apna protocol layer hai (engine-layer in-house):
+
+- `ghostrise/wire.py` — **GhostWire**: chromium ko raw CDP (WebSocket)
+  se drive karta hai — zero playwright dependency, zero library
+  CDP-call-pattern fingerprint. Stealth init-script inject
+  (webdriver=undefined, chrome obj, plugins, languages), DOM/evaluate
+  surface, resi/pool proxy support (--proxy-server).
+- `ghostrise/wire_mouse.py` — **WireMouse**: raw `Input.dispatchMouseEvent`
+  injection — bezier trajectories + perpendicular control-point
+  curvature + micro-jitter + humanized press-duration. `Input.insertText`
+  typing per-char humanized delay. RL shapes (rl_mouse_v6.npz) loaded.
+- Engine ladder me `engine='wire'` mode: `GhostSession(engine="wire")`
+  — apna protocol + apna input. (auto mode me CloakBrowser pehle
+  rehta hai — battle-tested; wire explicit.)
+
+LIVE-TESTED (03-Sep-2026): goto/evaluate/text ✓, httpbin 200 ✓,
+WireMouse move/click/type/scroll ✓, GhostSession drop-in ✓
+(title/evaluate/human interface), stealth init
+(navigator.webdriver=None, plugins.length=5) ✓.
+
+CF managed-Turnstile honest note: wire pe bhi token mint silent-fail
+— root cause chromium-BUILD detection hai (raw protocol se bachta
+nahi). Wire ka apna value: protocol+input fingerprint hamara, koi
+third-party runtime dependency nahi, aur non-CF walls ke liye sabse
+clean surface.
