@@ -264,3 +264,18 @@ replayed through the same proxy they were minted on.
 New engine = subclass `BaseEngine`, implement `solve(image) -> str`, drop it
 in `solver/engines/`, wire it into `build_engine()` in `cli.py`. The
 preprocessing pipeline and segmentation are shared by every local engine.
+
+## 5sim.net web captcha (03-Sep-2026, live-tested)
+
+- Login pe **Cloudflare Turnstile managed-mode** (React, invisible —
+  checkbox nahi hota). Signup/landing pe captcha nahi.
+- Hamara stack: DETECT ✓ (turnstile widget + frame), turnstile obj ✓,
+  humanized pre-interaction ✓, token-scan (inputs + fiber) ✓.
+- **Honest wall**: managed Turnstile token-mint IP-reputation pe
+  hota hai — ye host (datacenter/proot) pe CF mint refuse karta hai.
+  20-30s settle + human warmup ke baad bhi token nahi.
+- **Fix path (in-repo)**: `GhostSession(proxy="pool")` — residential
+  proxy se launch karo, managed Turnstile wahan mint karta hai.
+  Proxy pool (`solver/proxies.py`) isi use-case ke liye built hai.
+- 5sim API pe captcha NAHI hai (Bearer key) — buy/OTP direct API
+  se hota hai, web login ki zaroorat hi nahi.
