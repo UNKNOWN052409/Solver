@@ -160,28 +160,38 @@ def train_torch(data_dir, epochs=20):
         sys.exit(1)
     nc = NUM_CLASSES
     net = TileNetT(nc)
+    # ---- adaptive device (GPU->CUDA/MPS, warna CPU) ----
+    from solver.vision.device import pick_device, batch_size_for, amp_enabled
+    device, dev_desc = pick_device()
+    net = net.to(device)
+    use_amp = amp_enabled(device)
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    print(f"[device] {dev_desc} | batch={batch_size_for(device)} | AMP={'ON' if use_amp else 'off'}")
     print(f"[torch] {sum(p.numel() for p in net.parameters()):,} params | "
           f"{len(pairs)} tiles")
     tf = T.Compose([T.Resize((96, 96)), T.ToTensor()])
     opt = torch.optim.Adam(net.parameters(), lr=1e-3)
     import random as _rnd
+    bs = batch_size_for(device)
     for ep in range(epochs):
         tot, loss_acc = 0, 0.0
         order = pairs[:]
         _rnd.shuffle(order)
-        for path, cls in order:
-            x = tf(Image.open(path).convert("RGB")).unsqueeze(0)
-            # PU soft-target + contrastive: apne grid-class ko 0.43
-            # (grid me ~1/3 positives ka prior), baaki classes 0.02
-            # soft-negative — isse bicycle-grid tiles 'bus' ko dabaati
-            # hain, contrastive separation milti hai (all-bus overfit fix).
-            y = torch.full((1, nc), 0.02)
-            y[0, cls] = POS_RATE + 0.1
-            logits = net(x)
-            loss = F.binary_cross_entropy_with_logits(logits, y)
-            opt.zero_grad(); loss.backward(); opt.step()
-            loss_acc += float(loss); tot += 1
-        print(f"  epoch {ep+1}: loss={loss_acc/max(1,tot):.4f} ({tot} tiles)")
+        for i in range(0, len(order), bs):
+            chunk = order[i:i + bs]
+            xs = torch.stack([tf(Image.open(p).convert("RGB")) for p, _ in chunk]).to(device)
+            ys = torch.full((len(chunk), nc), 0.02)
+            for j, (_, cls) in enumerate(chunk):
+                ys[j, cls] = POS_RATE + 0.1
+            with torch.amp.autocast("cuda", enabled=use_amp):
+                logits = net(xs)
+                loss = F.binary_cross_entropy_with_logits(logits.float(), ys)
+            opt.zero_grad()
+            scaler.scale(loss).backward()
+            scaler.step(opt)
+            scaler.update()
+            loss_acc += float(loss) * len(chunk); tot += len(chunk)
+        print(f"  epoch {ep+1}: loss={loss_acc/max(1,tot):.4f} ({tot} tiles, bs={bs})")
     os.makedirs("data/pt", exist_ok=True)
     torch.save(net.state_dict(), "data/pt/tilenet.pt")
     # ONNX export

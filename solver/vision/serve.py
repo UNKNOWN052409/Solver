@@ -25,17 +25,22 @@ from model import TileNet, RotNet, CLASSES
 
 
 def _load():
-    """ONNX (fast) warna numpy-ref TileNet. Returns (predict_fn, backend)."""
+    """Adaptive backend ladder: ONNX (GPU pe CUDA-EP warna CPU-EP) warna
+    numpy-ref TileNet. Returns (predict_fn, backend)."""
     onnx_path = "data/pt/tilenet.onnx"
     if os.path.exists(onnx_path):
         try:
             import onnxruntime as ort
-            sess = ort.InferenceSession(onnx_path,
-                                        providers=["CPUExecutionProvider"])
+            # GPU ho to CUDA EP automatically — CPU warna
+            provs = ort.get_available_providers()
+            want = [p for p in ("CUDAExecutionProvider", "TensorrtExecutionProvider") if p in provs]
+            want.append("CPUExecutionProvider")
+            sess = ort.InferenceSession(onnx_path, providers=want)
+            used = sess.get_providers()[0]
             def predict(batch):
                 x = np.ascontiguousarray(batch, dtype=np.float32)
                 return sess.run(None, {"tile": x})[0]
-            return predict, "onnx"
+            return predict, f"onnx:{used}"
         except ImportError:
             pass
     net = TileNet()
