@@ -43,7 +43,7 @@ RECAPTCHA_V2 = {
 }
 
 HCAPTCHA = {
-    "frame": "iframe[src*='hcaptcha.com']",
+    "frame": "iframe[src*='hcaptcha.com'], iframe[src*='newassets.hcaptcha.com']",
     "box": "#checkbox, .checkbox",
     "solved": ".checked",
 }
@@ -72,8 +72,8 @@ def _content_frame(page, iframe_sel, timeout=8000):
             return cf
     except Exception:
         pass
-    # fallback: page.frames me URL se dhundo
-    marker = iframe_sel.split("src*=")[-1].strip("'\"")
+    # fallback: page.frames me URL se dhundo (multi-selector safe)
+    marker = iframe_sel.split("src*=")[-1].strip("'\"").split(",")[0].strip(" '\"")
     try:
         for fr in page.frames:
             if marker in (fr.url or ""):
@@ -208,7 +208,17 @@ def _solver_audio_ocr(page, audio_url):
 def solve_hcaptcha(page, human, timeout=20000):
     """Checkbox click. Grid challenge aaya to local image-OCR try, warna
     human-in-loop note (keyless hi rehta hai)."""
-    fr = _frame_at(page, HCAPTCHA["frame"])
+    # frame dhoondo: pehle selector se, warna frames-loop URL se
+    fr = _content_frame(page, HCAPTCHA["frame"])
+    if not fr:
+        try:
+            for f in page.frames:
+                u = f.url or ""
+                if "hcaptcha.com" in u or "newassets.hcaptcha.com" in u:
+                    fr = f
+                    break
+        except Exception:
+            pass
     if not fr:
         return False, "hcaptcha frame not found"
     if _click_box(fr, human, HCAPTCHA["box"]):
@@ -258,7 +268,7 @@ def solve_turnstile(page, human, timeout=25000):
 
 
 def solve_aws_waf(page, human, timeout=15000):
-    fr = _frame_at(page, AWS_WAF["frame"])
+    fr = _content_frame(page, AWS_WAF["frame"])
     if not fr:
         return False, "aws-waf frame not found"
     if _click_box(fr, human, AWS_WAF["box"]):
