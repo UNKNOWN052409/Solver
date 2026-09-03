@@ -21,9 +21,23 @@ from ghostrise.profiles import load_profile
 
 
 def _proxy_url(proxy: str | None) -> str | None:
-    """Normalize any common proxy notation to a URL string for cloakbrowser."""
+    """Normalize any common proxy notation to a URL string for cloakbrowser.
+
+    'pool' special-case: solver.proxies.ProxyPool se healthy proxy
+    auto-pick (LRU rotation) — browser us IP se launch hoga."""
     if not proxy:
         return None
+    if proxy.strip() == "pool":
+        try:
+            from solver.proxies import default_pool
+            picked = default_pool().next()
+            if picked:
+                return picked
+            print("[pool] koi healthy proxy nahi — direct ja raha hoon")
+            return None
+        except Exception as e:
+            print(f"[pool] fallback direct: {str(e)[:60]}")
+            return None
     rest = proxy.split("://", 1)[-1]
     if "@" in rest:
         creds, hostport = rest.rsplit("@", 1)

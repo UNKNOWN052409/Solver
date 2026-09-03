@@ -168,6 +168,73 @@ def cmd_xget(a):
         sys.exit("[!] no posts returned (syndication may be rate-limited — retry later)")
 
 
+def cmd_proxy(a):
+    """IP-proxy pool — browser/requests ke liye rotation base."""
+    import json as _json
+    from solver.proxies import default_pool
+
+    pool = default_pool()
+    if a.action == "add":
+        added = 0
+        if a.value:
+            if a.value.startswith(("http", "socks")) or ":" in a.value:
+                added = 1 if pool.add(a.value) else 0
+            else:
+                added = pool.add_file(a.value)
+        if a.api:
+            pool.add_api(a.api)
+        pool.save()
+        print(f"[+] added {added} | total {pool.stats()['total']}")
+    elif a.action == "list":
+        print(_json.dumps(pool.list(), indent=1))
+    elif a.action == "check":
+        ip, lat = pool.check(a.value)
+        print(f"{'OK ' if ip else 'FAIL'} {a.value} -> ip={ip} {lat}")
+    elif a.action == "check-all":
+        for u, ip, lat in pool.check_all():
+            print(f"{'OK ' if ip else 'FAIL'} {u} -> {ip} {lat}")
+    elif a.action == "next":
+        p = pool.next()
+        print(p if p else "[!] pool empty/dead")
+    elif a.action == "stats":
+        print(_json.dumps(pool.stats(), indent=1))
+    elif a.action == "refresh":
+        print(f"[+] {pool.refresh()} merged from vendor APIs")
+    elif a.action == "remove":
+        print("[+]" if pool.remove(a.value) else "[!] not found")
+
+
+def cmd_fivesim(a):
+    """5sim.net — virtual numbers se SMS OTP."""
+    import json as _json
+    from solver.fivesim import FiveSim
+
+    fs = FiveSim(key=a.key or None)
+    try:
+        if a.action == "stock":
+            cost, count = fs.stock(a.value or "india", a.product)
+            print(f"{a.value or 'india'}/{a.product}: ${cost} | {count} available")
+        elif a.action == "prices":
+            print(_json.dumps(fs.prices(a.value or "india", a.product), indent=1))
+        elif a.action == "countries":
+            c = fs.countries()
+            print(f"{len(c)} countries:", ", ".join(sorted(c)[:20]), "...")
+        elif a.action == "buy":
+            order = fs.buy(a.value or "india", a.operator, a.product)
+            if order.get("phone"):
+                print(f"[+] phone: {order['phone']} | order: {order.get('id')}")
+                print("[+] OTP wait: solver fivesim otp <order_id>")
+            else:
+                print("[!] buy fail:", str(order)[:120])
+        elif a.action == "check":
+            print(_json.dumps(fs.check(a.value), indent=1))
+        elif a.action == "otp":
+            otp, sms = fs.wait_otp(a.value, timeout=a.timeout)
+            print(f"[+] OTP: {otp}" if otp else f"[!] {sms}")
+    except RuntimeError as e:
+        sys.exit(f"[!] {e}")
+
+
 def cmd_keygen(a):
     """Generate a solver API key into the keyring."""
     import json as _json
@@ -310,6 +377,24 @@ def main():
     kg.add_argument("--revoke", default="", help="full key to revoke instead of creating")
     kg.add_argument("--list", dest="list_only", action="store_true", help="list keys")
     kg.set_defaults(fn=cmd_keygen)
+
+    # ------- proxy pool + 5sim -------
+
+    pp = sub.add_parser("proxy", help="IP-proxy pool: add/list/check/next/refresh")
+    pp.add_argument("action", choices=["add", "list", "check", "check-all", "next", "stats", "refresh", "remove"])
+    pp.add_argument("value", default="", nargs="?",
+                    help="proxy URL ya file path (action ke hisaab se)")
+    pp.add_argument("--api", default="", help="vendor feed URL (add action ke saath)")
+    pp.set_defaults(fn=cmd_proxy)
+
+    fs = sub.add_parser("fivesim", help="5sim.net virtual numbers — SMS OTP")
+    fs.add_argument("action", choices=["stock", "prices", "countries", "buy", "check", "otp"])
+    fs.add_argument("value", default="", nargs="?", help="country (stock/prices/buy) ya order_id (check/otp)")
+    fs.add_argument("--product", default="google")
+    fs.add_argument("--operator", default="any")
+    fs.add_argument("--timeout", type=int, default=180)
+    fs.add_argument("--key", default="", help="5sim API key (ya FIVESIM_KEY env)")
+    fs.set_defaults(fn=cmd_fivesim)
 
     # ------- external solving service -------
 

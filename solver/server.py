@@ -438,3 +438,145 @@ def revoke_key(key: str):
     if not _kr().revoke(key):
         raise HTTPException(status_code=404, detail="key not found (or wrong full key)")
     return {"revoked": key[:14] + "…"}
+
+
+# ------------------------------------------------------------ proxy pool
+from solver.proxies import default_pool as _pool
+
+
+class ProxyAddRequest(BaseModel):
+    proxy: str = ""                # http://user:pass@host:port
+    file: str = ""                 # path with one proxy per line
+    api: str = ""                  # vendor feed URL
+
+
+@app.post("/proxy/add", dependencies=[Depends(require_key)])
+def proxy_add(req: ProxyAddRequest):
+    pool = _pool()
+    added = 0
+    if req.proxy:
+        added += 1 if pool.add(req.proxy) else 0
+    if req.api:
+        pool.add_api(req.api)
+    if req.file:
+        try:
+            added += pool.add_file(req.file)
+        except Exception as e:
+            raise HTTPException(400, f"file read fail: {str(e)[:80]}")
+    pool.save()
+    return {"added": added, "total": pool.stats()["total"]}
+
+
+@app.get("/proxy/next", dependencies=[Depends(require_key)])
+def proxy_next():
+    p = _pool().next()
+    if not p:
+        raise HTTPException(404, "pool empty ya sab dead — /proxy/add karo")
+    return {"proxy": p}
+
+
+@app.get("/proxy/check", dependencies=[Depends(require_key)])
+def proxy_check(proxy: str, timeout: int = 8):
+    ip, lat = _pool().check(proxy, timeout)
+    return {"proxy": proxy, "ip": ip, "latency": lat}
+
+
+@app.post("/proxy/check-all", dependencies=[Depends(require_key)])
+def proxy_check_all():
+    return [{"proxy": u, "ip": ip, "latency": lat}
+            for u, ip, lat in _pool().check_all()]
+
+
+@app.get("/proxy/stats", dependencies=[Depends(require_key)])
+def proxy_stats():
+    return _pool().stats()
+
+
+@app.get("/proxy/list", dependencies=[Depends(require_key)])
+def proxy_list():
+    return _pool().list()
+
+
+@app.post("/proxy/refresh", dependencies=[Depends(require_key)])
+def proxy_refresh():
+    n = _pool().refresh()
+    return {"added_from_apis": n, **_pool().stats()}
+
+
+@app.delete("/proxy/{proxy:path}", dependencies=[Depends(require_key)])
+def proxy_remove(proxy: str):
+    return {"removed": _pool().remove(proxy)}
+
+
+# ------------------------------------------------------------ 5sim (SMS OTP)
+from solver.fivesim import FiveSim as _FiveSim
+
+
+def _fs():
+    return _FiveSim()
+
+
+@app.get("/fivesim/countries", dependencies=[Depends(require_key)])
+def fivesim_countries():
+    return _fs().countries()
+
+
+@app.get("/fivesim/prices", dependencies=[Depends(require_key)])
+def fivesim_prices(country: str, product: str = ""):
+    return _fs().prices(country, product or None)
+
+
+@app.get("/fivesim/stock", dependencies=[Depends(require_key)])
+def fivesim_stock(country: str, product: str):
+    cost, count = _fs().stock(country, product)
+    return {"country": country, "product": product,
+            "cost_usd": cost, "available": count}
+
+
+@app.get("/fivesim/profile", dependencies=[Depends(require_key)])
+def fivesim_profile():
+    try:
+        return _fs().profile()
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+
+class FiveSimBuyRequest(BaseModel):
+    country: str = "india"
+    product: str = "google"
+    operator: str = "any"
+    wait_otp: bool = False
+    timeout: int = 180
+
+
+@app.post("/fivesim/buy", dependencies=[Depends(require_key)])
+def fivesim_buy(req: FiveSimBuyRequest):
+    fs = _fs()
+    try:
+        if req.wait_otp:
+            phone, otp = fs.buy_and_wait(req.country, req.product,
+                                         timeout=req.timeout,
+                                         operator=req.operator)
+            return {"phone": phone, "otp": otp}
+        order = fs.buy(req.country, req.operator, req.product)
+        if not order.get("phone"):
+            raise HTTPException(400, f"buy fail: {str(order)[:120]}")
+        return order
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, str(e)[:160])
+
+
+@app.get("/fivesim/check/{order_id}", dependencies=[Depends(require_key)])
+def fivesim_check(order_id: str):
+    try:
+        return _fs().check(order_id)
+    except Exception as e:
+        raise HTTPException(400, str(e)[:160])
+
+
+@app.get("/fivesim/otp/{order_id}", dependencies=[Depends(require_key)])
+def fivesim_otp(order_id: str, timeout: int = 120):
+    otp, sms = _fs().wait_otp(order_id, timeout=timeout)
+    return {"otp": otp, "sms": sms}
