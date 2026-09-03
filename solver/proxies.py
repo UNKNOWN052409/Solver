@@ -254,3 +254,29 @@ def default_pool():
     if _default is None:
         _default = ProxyPool()
     return _default
+
+
+def egress_info():
+    """System ka current egress IP + type (resi/datacenter detect).
+
+    Returns {ip, isp, country, mobile, proxy, hosting, residential}."""
+    try:
+        req = urllib.request.Request(
+            "http://ip-api.com/json/?fields=status,country,city,isp,org,as,"
+            "mobile,proxy,hosting,query",
+            headers={"User-Agent": "curl/8.0"})
+        with urllib.request.urlopen(req, timeout=12) as r:
+            d = json.loads(r.read().decode())
+        if d.get("status") != "success":
+            return {"ip": None, "residential": None, "err": d.get("message", "")}
+        return {
+            "ip": d.get("query"),
+            "isp": d.get("isp"),
+            "country": d.get("country"),
+            "mobile": d.get("mobile"),
+            "proxy": d.get("proxy"),
+            "hosting": d.get("hosting"),
+            "residential": (not d.get("hosting")) and (not d.get("proxy")),
+        }
+    except Exception as e:
+        return {"ip": None, "residential": None, "err": str(e)[:60]}
