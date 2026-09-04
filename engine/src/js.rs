@@ -768,6 +768,20 @@ impl Parser {
 pub struct Interp {
     pub global: Rc<RefEnv>,
     pub logs: RefCell<Vec<String>>, // console.log capture
+    /// DOM-bridge: page-snapshot data — document.* calls isi se
+    /// serve hote hain (engine M4b — JS ko real DOM dikhta hai)
+    pub dom: RefCell<DomSnapshot>,
+}
+
+/// Page ka JS-visible snapshot (owned strings — lifetime-free).
+#[derive(Default, Clone)]
+pub struct DomSnapshot {
+    pub title: String,
+    pub text: String,
+    pub links: Vec<(String, String)>, // href, text
+    pub forms: Vec<(String, String, Vec<(String, String, String)>)>, // action, method, fields
+    pub ids: BTreeMap<String, String>, // id -> text
+    pub classes: BTreeMap<String, Vec<String>>, // class -> texts
 }
 
 #[derive(Debug, Clone)]
@@ -786,9 +800,38 @@ impl Interp {
         let it = Interp {
             global: g,
             logs: RefCell::new(vec![]),
+            dom: RefCell::new(DomSnapshot::default()),
         };
         it.setup_globals();
         it
+    }
+
+    /// M4b: DOM attach — is interp ko page ka snapshot do, document.*
+    /// calls ab isi se resolve honge.
+    pub fn attach_dom(&self, page: &crate::Page) {
+        let mut d = self.dom.borrow_mut();
+        d.title = page.title();
+        d.text = page.text();
+        d.links = page.links();
+        d.forms = page.forms();
+        // id/class maps — querySelector-lite + getElementsByClassName
+        fn walk(n: &crate::Node, d: &mut DomSnapshot) {
+            if let Some(tag) = n.tag.as_deref() {
+                if let Some(id) = n.attrs.get("id") {
+                    d.ids.insert(id.clone(), n.inner_text());
+                }
+                if let Some(cls) = n.attrs.get("class") {
+                    for c in cls.split_whitespace() {
+                        d.classes.entry(c.to_string()).or_default().push(n.inner_text());
+                    }
+                }
+                let _ = tag;
+            }
+            for c in &n.children {
+                walk(c, d);
+            }
+        }
+        walk(&page.root, &mut d);
     }
 
     fn setup_globals(&self) {
@@ -796,6 +839,10 @@ impl Interp {
         self.global.declare("Math", Value::Obj(BTreeMap::new()));
         self.global.declare("JSON", Value::Obj(BTreeMap::new()));
         self.global.declare("Date", Value::Obj(BTreeMap::new()));
+        // M4b DOM-bridge — __ns__ marker se get_member pehchanta hai
+        let mut dobj = BTreeMap::new();
+        dobj.insert("__ns__".to_string(), Value::Str("document".to_string()));
+        self.global.declare("document", Value::Obj(dobj));
         self.global.declare("undefined", Value::Undefined);
         self.global.declare("NaN", Value::Num(f64::NAN));
     }
@@ -1172,6 +1219,19 @@ impl Interp {
     }
 
     fn get_member(&self, o: &Value, k: &Value) -> Result<Value, String> {
+        // M4b: document.title/body/links/forms — property-GET path
+        if let (Value::Obj(m), Value::Str(key)) = (o, k) {
+            if m.get("__ns__").and_then(|v| match v {
+                Value::Str(s) => Some(s.as_str()),
+                _ => None,
+            }) == Some("document")
+            {
+                if let Some(v) = self.dom_prop(key)? {
+                    return Ok(v);
+                }
+            }
+            return Ok(m.get(key).cloned().unwrap_or(Value::Undefined));
+        }
         match (o, k) {
             (Value::Obj(m), Value::Str(key)) => Ok(m.get(key).cloned().unwrap_or(Value::Undefined)),
             (Value::Arr(a), Value::Num(i)) => Ok(a
@@ -1238,12 +1298,147 @@ impl Interp {
         }
     }
 
+    /// document.* property-GET serve (call_builtin bhi isi se
+    /// value-build karta hai — ek hi data source)
+    fn dom_prop(&self, key: &str) -> Result<Option<Value>, String> {
+        match key {
+            "title" => Ok(Some(Value::Str(self.dom.borrow().title.clone()))),
+            "body" => Ok(Some(Value::Str(self.dom.borrow().text.clone()))),
+            "links" => {
+                let d = self.dom.borrow();
+                let arr: Vec<Value> = d
+                    .links
+                    .iter()
+                    .map(|(h, t)| {
+                        let mut o = BTreeMap::new();
+                        o.insert("href".to_string(), Value::Str(h.clone()));
+                        o.insert("text".to_string(), Value::Str(t.clone()));
+                        Value::Obj(o)
+                    })
+                    .collect();
+                Ok(Some(Value::Arr(arr)))
+            }
+            "forms" => {
+                let d = self.dom.borrow();
+                let arr: Vec<Value> = d
+                    .forms
+                    .iter()
+                    .map(|(a, m, fields)| {
+                        let mut o = BTreeMap::new();
+                        o.insert("action".to_string(), Value::Str(a.clone()));
+                        o.insert("method".to_string(), Value::Str(m.clone()));
+                        let fs: Vec<Value> = fields
+                            .iter()
+                            .map(|(n, t, v)| {
+                                let mut fo = BTreeMap::new();
+                                fo.insert("name".to_string(), Value::Str(n.clone()));
+                                fo.insert("type".to_string(), Value::Str(t.clone()));
+                                fo.insert("value".to_string(), Value::Str(v.clone()));
+                                Value::Obj(fo)
+                            })
+                            .collect();
+                        o.insert("fields".to_string(), Value::Arr(fs));
+                        Value::Obj(o)
+                    })
+                    .collect();
+                Ok(Some(Value::Arr(arr)))
+            }
+            _ => Ok(None), // querySelector etc — call path
+        }
+    }
+
     /// console/Math/JSON/Date builtins — None = user-fn path
     fn call_builtin(&self, ns: &str, method: &str, args: &[Value]) -> Result<Option<Value>, String> {
         let bad = |m: &str| -> Result<Option<Value>, String> {
             Err(format!("{}.{} args bad", ns, m))
         };
         match (ns, method) {
+            // ---------------- M4b: DOM-bridge (document.*) ----------------
+            ("document", "title") => Ok(Some(Value::Str(self.dom.borrow().title.clone()))),
+            ("document", "body") => {
+                // body text (rendered) — common scraping pattern
+                let t = self.dom.borrow().text.clone();
+                Ok(Some(Value::Str(t)))
+            }
+            ("document", "links") => {
+                let d = self.dom.borrow();
+                let arr: Vec<Value> = d
+                    .links
+                    .iter()
+                    .map(|(h, t)| {
+                        let mut o = BTreeMap::new();
+                        o.insert("href".to_string(), Value::Str(h.clone()));
+                        o.insert("text".to_string(), Value::Str(t.clone()));
+                        Value::Obj(o)
+                    })
+                    .collect();
+                Ok(Some(Value::Arr(arr)))
+            }
+            ("document", "forms") => {
+                let d = self.dom.borrow();
+                let arr: Vec<Value> = d
+                    .forms
+                    .iter()
+                    .map(|(a, m, fields)| {
+                        let mut o = BTreeMap::new();
+                        o.insert("action".to_string(), Value::Str(a.clone()));
+                        o.insert("method".to_string(), Value::Str(m.clone()));
+                        let fs: Vec<Value> = fields
+                            .iter()
+                            .map(|(n, t, v)| {
+                                let mut fo = BTreeMap::new();
+                                fo.insert("name".to_string(), Value::Str(n.clone()));
+                                fo.insert("type".to_string(), Value::Str(t.clone()));
+                                fo.insert("value".to_string(), Value::Str(v.clone()));
+                                Value::Obj(fo)
+                            })
+                            .collect();
+                        o.insert("fields".to_string(), Value::Arr(fs));
+                        Value::Obj(o)
+                    })
+                    .collect();
+                Ok(Some(Value::Arr(arr)))
+            }
+            ("document", "querySelector") => {
+                // "#id" | ".class" | "tag" — first match text ya null
+                let sel = match args.first() {
+                    Some(Value::Str(s)) => s.clone(),
+                    _ => return Ok(Some(Value::Null)),
+                };
+                let d = self.dom.borrow();
+                if let Some(id) = sel.strip_prefix('#') {
+                    return Ok(match d.ids.get(id) {
+                        Some(t) => Some(Value::Str(t.clone())),
+                        None => Some(Value::Null),
+                    });
+                }
+                if let Some(cls) = sel.strip_prefix('.') {
+                    return Ok(match d.classes.get(cls).and_then(|v| v.first()) {
+                        Some(t) => Some(Value::Str(t.clone())),
+                        None => Some(Value::Null),
+                    });
+                }
+                // tag: title special-case, baaki me text-scan nahi — null
+                if sel == "title" {
+                    return Ok(Some(Value::Str(d.title.clone())));
+                }
+                Ok(Some(Value::Null))
+            }
+            ("document", "getElementsByClassName") => {
+                let cls = match args.first() {
+                    Some(Value::Str(s)) => s.clone(),
+                    _ => return Ok(Some(Value::Arr(vec![]))),
+                };
+                let texts = self
+                    .dom
+                    .borrow()
+                    .classes
+                    .get(&cls)
+                    .cloned()
+                    .unwrap_or_default();
+                Ok(Some(Value::Arr(texts.into_iter().map(Value::Str).collect())))
+            }
+            // ---------------- end DOM-bridge ----------------
             ("console", "log") => {
                 let line = args
                     .iter()
@@ -1312,6 +1507,26 @@ impl Interp {
     /// (js-web DOM layer isko extend karega)
     pub fn call_method(&self, o: Value, method: &str, args: &[Value]) -> Result<Value, String> {
         match (&o, method) {
+            (Value::Str(s), "indexOf") => {
+                // JS indexOf: substring-search, nahi mila to -1
+                let needle = match args.first() {
+                    Some(Value::Str(n)) => n.clone(),
+                    _ => String::new(),
+                };
+                Ok(Value::Num(match s.find(&needle) {
+                    Some(b) => s[..b].chars().count() as f64,
+                    None => -1.0,
+                }))
+            }
+            (Value::Arr(a), "indexOf") => {
+                let target = args.first().cloned().unwrap_or(Value::Undefined);
+                for (i, item) in a.iter().enumerate() {
+                    if *item == target {
+                        return Ok(Value::Num(i as f64));
+                    }
+                }
+                Ok(Value::Num(-1.0))
+            }
             (Value::Str(s), "toUpperCase") => Ok(Value::Str(s.to_uppercase())),
             (Value::Str(s), "toLowerCase") => Ok(Value::Str(s.to_lowercase())),
             (Value::Str(s), "slice") => {
@@ -1739,6 +1954,52 @@ mod tests {
     fn console_log_capture() {
         let logs = logs("console.log('hello', 42, [1,2]);");
         assert_eq!(logs[0], "hello 42 [1,2]");
+    }
+
+    #[test]
+    fn dom_bridge_scraping() {
+        // M4b: attach_dom ke baad document.* JS se real page dikhta hai
+        let html = "<html><head><title>RE Target</title></head>\
+            <body><a href='/a'>Alpha</a><a href='/b'>Beta</a>\
+            <div id='status'>walled</div><div class='wall'>Turnstile</div>\
+            <form action='/login' method='POST'><input name='email'/></form>\
+            </body></html>";
+        let page = crate::Page::parse(html);
+        let mut it = Interp::new();
+        it.attach_dom(&page);
+
+        assert_eq!(it.run("document.title").unwrap(), Value::Str("RE Target".into()));
+        let links = it.run("document.links.length").unwrap();
+        assert_eq!(links, Value::Num(2.0));
+        let first_href = it.run("document.links[0].href").unwrap();
+        assert_eq!(first_href, Value::Str("/a".into()));
+        let q = it.run("document.querySelector('#status')").unwrap();
+        assert_eq!(q, Value::Str("walled".into()));
+        let cls = it.run("document.querySelector('.wall')").unwrap();
+        assert_eq!(cls, Value::Str("Turnstile".into()));
+        let forms = it.run("document.forms.length").unwrap();
+        assert_eq!(forms, Value::Num(1.0));
+        let act = it.run("document.forms[0].action").unwrap();
+        assert_eq!(act, Value::Str("/login".into()));
+    }
+
+    #[test]
+    fn dom_bridge_js_math_scrape() {
+        // end-to-end: DOM data + JS logic combine — wall-scan script
+        let html = "<title>Chk</title><div class='cf'>challenge</div>\
+            <form action='/verify'><input name='cf-turnstile-response'/></form>";
+        let page = crate::Page::parse(html);
+        let mut it = Interp::new();
+        it.attach_dom(&page);
+        let v = it
+            .run(
+                "var w = document.querySelector('.cf'); \
+                 var f = document.forms[0]; \
+                 var bad = f.fields[0].name; \
+                 if (w != null && bad.indexOf('turnstile') >= 0) { 'WALLED' } else { 'clear' }",
+            )
+            .unwrap();
+        assert_eq!(v, Value::Str("WALLED".into()));
     }
 
     #[test]
