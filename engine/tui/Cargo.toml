@@ -1,0 +1,10 @@
+[package]
+name = "ghostbrowse-tui"
+version = "0.1.0"
+edition = "2021"
+
+# engine lib ZERO-dep rehta hai; ye UI crate hai (browser binary).
+[dependencies]
+ghostengine = { path = ".." }
+ratatui = "0.29"
+crossterm = "0.28"
