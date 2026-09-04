@@ -14,6 +14,15 @@
 use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------- tokens --
+// (engine ke andar M1 wale core + naye layers: human render + anti-captcha)
+
+pub mod human;
+pub mod anti;
+
+pub use anti::{CapTech, WallInfo};
+pub use human::{render, GhostShell, resolve_url};
+
+// ---------------------------------------------------------------- tokens --
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     Text(String),
