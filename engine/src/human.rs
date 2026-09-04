@@ -25,8 +25,17 @@ pub fn render(page: &Page, width: usize) -> String {
     if !links.is_empty() {
         out.push_str(&format!("\n{}\n LINKS\n", "═".repeat(width.min(72))));
         for (i, (href, text)) in links.iter().enumerate() {
-            let label = if text.is_empty() { href.clone() } else { text.clone() };
-            out.push_str(&format!("  [{:>2}] {} \n       → {}\n", i + 1, truncate(&label, 60), truncate(href, width.saturating_sub(8))));
+            let label = if text.is_empty() {
+                href.clone()
+            } else {
+                text.clone()
+            };
+            out.push_str(&format!(
+                "  [{:>2}] {} \n       → {}\n",
+                i + 1,
+                truncate(&label, 60),
+                truncate(href, width.saturating_sub(8))
+            ));
         }
     }
     let forms = page.forms();
@@ -35,7 +44,12 @@ pub fn render(page: &Page, width: usize) -> String {
         for (action, method, fields) in &forms {
             out.push_str(&format!("  ▸ {} {} ({})\n", method, action, fields.len()));
             for (name, ty, val) in fields {
-                out.push_str(&format!("      · {}: {} = {}\n", name, ty, truncate(val, 24)));
+                out.push_str(&format!(
+                    "      · {}: {} = {}\n",
+                    name,
+                    ty,
+                    truncate(val, 24)
+                ));
             }
         }
     }
@@ -54,8 +68,14 @@ fn truncate(s: &str, max: usize) -> String {
 const HEADINGS: &[&str] = &["h1", "h2", "h3", "h4", "h5", "h6"];
 const SKIP: &[&str] = &["script", "style", "noscript", "svg", "head"];
 
-fn render_node(n: &Node, depth: usize, width: usize, out: &mut String,
-               links: &mut Vec<(String, String)>, in_link: bool) {
+fn render_node(
+    n: &Node,
+    depth: usize,
+    width: usize,
+    out: &mut String,
+    links: &mut Vec<(String, String)>,
+    in_link: bool,
+) {
     let tag = n.tag.as_deref().unwrap_or("");
     if SKIP.contains(&tag) {
         return;
@@ -80,7 +100,11 @@ fn render_node(n: &Node, depth: usize, width: usize, out: &mut String,
         let idx = links.len() + 1;
         if !href.is_empty() && !href.starts_with('#') {
             links.push((href, text.clone()));
-            out.push_str(&format!("  [{}] {} ", idx, if text.is_empty() { "•".into() } else { text }));
+            out.push_str(&format!(
+                "  [{}] {} ",
+                idx,
+                if text.is_empty() { "•".into() } else { text }
+            ));
         } else if !text.is_empty() {
             out.push_str(&format!("  {} ", text));
         }
@@ -88,9 +112,12 @@ fn render_node(n: &Node, depth: usize, width: usize, out: &mut String,
         return;
     }
     if HEADINGS.contains(&tag) {
-        out.push_str(&format!("\n{} {} {}\n", "  ".repeat(depth.min(2)),
-                    "◈".repeat(7 - tag[1..].parse::<usize>().unwrap_or(1).min(6)),
-                    n.inner_text()));
+        out.push_str(&format!(
+            "\n{} {} {}\n",
+            "  ".repeat(depth.min(2)),
+            "◈".repeat(7 - tag[1..].parse::<usize>().unwrap_or(1).min(6)),
+            n.inner_text()
+        ));
         return;
     }
     if tag == "p" || tag == "li" || tag == "blockquote" {
@@ -157,7 +184,10 @@ pub struct GhostShell {
 
 impl GhostShell {
     pub fn new() -> Self {
-        GhostShell { history: vec![], current: None }
+        GhostShell {
+            history: vec![],
+            current: None,
+        }
     }
     pub fn show(&mut self, page: Page, url: &str) -> String {
         self.history.push(url.to_string());
@@ -228,6 +258,9 @@ mod tests {
         let out = sh.show(Page::parse(html), "https://example.com/news/today");
         assert!(out.contains("Next page"));
         assert_eq!(sh.link_url(1).unwrap(), "https://example.com/next");
-        assert_eq!(resolve_url("https://a.com/x/y", "https://b.com/z"), "https://b.com/z");
+        assert_eq!(
+            resolve_url("https://a.com/x/y", "https://b.com/z"),
+            "https://b.com/z"
+        );
     }
 }

@@ -16,17 +16,26 @@ use std::collections::BTreeMap;
 // ---------------------------------------------------------------- tokens --
 // (engine ke andar M1 wale core + naye layers: human render + anti-captcha)
 
-pub mod human;
 pub mod anti;
+pub mod human;
+pub mod net;
 
 pub use anti::{CapTech, WallInfo};
-pub use human::{render, GhostShell, resolve_url};
+pub use human::{render, resolve_url, GhostShell};
+pub use net::{
+    b64_encode, host_core, url_host, AuthHeader, Cookie, CookieJar, ProxyEndpoint, ProxyRoute,
+    Resp, Session, SessionDoc, Transport,
+};
 
 // ---------------------------------------------------------------- tokens --
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     Text(String),
-    OpenTag { name: String, attrs: Vec<(String, String)>, self_closing: bool },
+    OpenTag {
+        name: String,
+        attrs: Vec<(String, String)>,
+        self_closing: bool,
+    },
     CloseTag(String),
     Comment(String),
     Doctype(String),
@@ -112,8 +121,11 @@ pub fn tokenize(src: &str) -> Vec<Tok> {
                     }
                     // attr name
                     let mut a = k;
-                    while a < n && !b[a].is_ascii_whitespace()
-                        && b[a] != b'=' && b[a] != b'>' && b[a] != b'/'
+                    while a < n
+                        && !b[a].is_ascii_whitespace()
+                        && b[a] != b'='
+                        && b[a] != b'>'
+                        && b[a] != b'/'
                     {
                         a += 1;
                     }
@@ -153,7 +165,11 @@ pub fn tokenize(src: &str) -> Vec<Tok> {
                     k += 1;
                 }
                 i = if k < n { k + 1 } else { n };
-                out.push(Tok::OpenTag { name, attrs, self_closing });
+                out.push(Tok::OpenTag {
+                    name,
+                    attrs,
+                    self_closing,
+                });
                 // void tags — self_closing treat
                 continue;
             }
@@ -184,8 +200,12 @@ pub fn decode_entities(s: &str) -> String {
         if let Some(semi) = rest.find(';').filter(|&e| e <= 12) {
             let ent = &rest[1..semi];
             let rep = match ent {
-                "amp" => Some('&'), "lt" => Some('<'), "gt" => Some('>'),
-                "quot" => Some('"'), "apos" => Some('\''), "nbsp" => Some(' '),
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                "nbsp" => Some(' '),
                 _ => None,
             };
             if let Some(c) = rep {
@@ -194,9 +214,11 @@ pub fn decode_entities(s: &str) -> String {
                 continue;
             }
             // numeric &#123; / &#x1F600;
-            if let Some(num) = ent.strip_prefix('#').or(ent.strip_prefix("#x")).map(|e| {
-                u32::from_str_radix(e, 16).ok().and_then(char::from_u32)
-            }) {
+            if let Some(num) = ent
+                .strip_prefix('#')
+                .or(ent.strip_prefix("#x"))
+                .map(|e| u32::from_str_radix(e, 16).ok().and_then(char::from_u32))
+            {
                 if let Some(c) = num {
                     out.push(c);
                     rest = &rest[semi + 1..];
@@ -214,18 +236,28 @@ pub fn decode_entities(s: &str) -> String {
 // ------------------------------------------------------------------- DOM --
 #[derive(Debug, Clone)]
 pub struct Node {
-    pub tag: Option<String>,                 // None = text node
+    pub tag: Option<String>, // None = text node
     pub attrs: BTreeMap<String, String>,
-    pub text: String,                        // text nodes ke liye
+    pub text: String, // text nodes ke liye
     pub children: Vec<Node>,
 }
 
 impl Node {
     pub fn new_elem(tag: &str) -> Node {
-        Node { tag: Some(tag.to_string()), attrs: BTreeMap::new(), text: String::new(), children: Vec::new() }
+        Node {
+            tag: Some(tag.to_string()),
+            attrs: BTreeMap::new(),
+            text: String::new(),
+            children: Vec::new(),
+        }
     }
     pub fn new_text(t: &str) -> Node {
-        Node { tag: None, attrs: BTreeMap::new(), text: t.to_string(), children: Vec::new() }
+        Node {
+            tag: None,
+            attrs: BTreeMap::new(),
+            text: t.to_string(),
+            children: Vec::new(),
+        }
     }
     pub fn attr(&self, k: &str) -> Option<&str> {
         self.attrs.get(k).map(|s| s.as_str())
@@ -253,8 +285,8 @@ impl Node {
 /// implicit-close (p, li jaise) best-effort. Stack-based, single pass.
 pub fn build_dom(toks: &[Tok]) -> Node {
     const VOID: &[&str] = &[
-        "area", "base", "br", "col", "embed", "hr", "img", "input",
-        "link", "meta", "param", "source", "track", "wbr",
+        "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
+        "source", "track", "wbr",
     ];
     let mut root = Node::new_elem("#root");
     let mut stack: Vec<Node> = vec![std::mem::replace(&mut root, Node::new_elem("#tmp"))];
@@ -262,9 +294,17 @@ pub fn build_dom(toks: &[Tok]) -> Node {
         match t {
             Tok::Text(s) => {
                 let clean = decode_entities(s);
-                stack.last_mut().unwrap().children.push(Node::new_text(&clean));
+                stack
+                    .last_mut()
+                    .unwrap()
+                    .children
+                    .push(Node::new_text(&clean));
             }
-            Tok::OpenTag { name, attrs, self_closing } => {
+            Tok::OpenTag {
+                name,
+                attrs,
+                self_closing,
+            } => {
                 let mut el = Node::new_elem(name);
                 for (k, v) in attrs {
                     el.attrs.insert(k.clone(), v.clone());
@@ -311,31 +351,43 @@ pub struct SelPart {
 }
 
 pub fn parse_sel(s: &str) -> Vec<SelPart> {
-    s.split_whitespace().map(|part| {
-        let mut p = SelPart { tag: None, classes: Vec::new(), id: None };
-        let mut rest = part;
-        if let Some(h) = rest.find(|c| c == '.' || c == '#') {
-            p.tag = Some(rest[..h].to_ascii_lowercase());
-            rest = &rest[h..];
-        } else {
-            p.tag = Some(rest.to_ascii_lowercase());
-            rest = "";
-        }
-        while !rest.is_empty() {
-            if rest.starts_with('.') {
-                let e = rest[1..].find(|c| c == '.' || c == '#').map(|e| 1 + e).unwrap_or(rest.len());
-                p.classes.push(rest[1..e].to_string());
-                rest = &rest[e..];
-            } else if rest.starts_with('#') {
-                let e = rest[1..].find(|c| c == '.' || c == '#').map(|e| 1 + e).unwrap_or(rest.len());
-                p.id = Some(rest[1..e].to_string());
-                rest = &rest[e..];
+    s.split_whitespace()
+        .map(|part| {
+            let mut p = SelPart {
+                tag: None,
+                classes: Vec::new(),
+                id: None,
+            };
+            let mut rest = part;
+            if let Some(h) = rest.find(|c| c == '.' || c == '#') {
+                p.tag = Some(rest[..h].to_ascii_lowercase());
+                rest = &rest[h..];
             } else {
-                break;
+                p.tag = Some(rest.to_ascii_lowercase());
+                rest = "";
             }
-        }
-        p
-    }).collect()
+            while !rest.is_empty() {
+                if rest.starts_with('.') {
+                    let e = rest[1..]
+                        .find(|c| c == '.' || c == '#')
+                        .map(|e| 1 + e)
+                        .unwrap_or(rest.len());
+                    p.classes.push(rest[1..e].to_string());
+                    rest = &rest[e..];
+                } else if rest.starts_with('#') {
+                    let e = rest[1..]
+                        .find(|c| c == '.' || c == '#')
+                        .map(|e| 1 + e)
+                        .unwrap_or(rest.len());
+                    p.id = Some(rest[1..e].to_string());
+                    rest = &rest[e..];
+                } else {
+                    break;
+                }
+            }
+            p
+        })
+        .collect()
 }
 
 fn matches(n: &Node, p: &SelPart) -> bool {
@@ -395,7 +447,9 @@ pub struct Page {
 
 impl Page {
     pub fn parse(html: &str) -> Page {
-        Page { root: build_dom(&tokenize(html)) }
+        Page {
+            root: build_dom(&tokenize(html)),
+        }
     }
 
     pub fn select(&self, sel: &str) -> Vec<&Node> {
@@ -403,7 +457,10 @@ impl Page {
     }
 
     pub fn title(&self) -> String {
-        self.select("title").first().map(|t| t.inner_text()).unwrap_or_default()
+        self.select("title")
+            .first()
+            .map(|t| t.inner_text())
+            .unwrap_or_default()
     }
 
     pub fn text(&self) -> String {
@@ -420,7 +477,10 @@ impl Page {
             for inp in f.children.iter().flat_map(|c| {
                 let mut v = Vec::new();
                 fn collect_inputs<'a>(n: &'a Node, v: &mut Vec<&'a Node>) {
-                    if n.tag.as_deref() == Some("input") || n.tag.as_deref() == Some("textarea") || n.tag.as_deref() == Some("select") {
+                    if n.tag.as_deref() == Some("input")
+                        || n.tag.as_deref() == Some("textarea")
+                        || n.tag.as_deref() == Some("select")
+                    {
                         v.push(n);
                     }
                     for c in &n.children {

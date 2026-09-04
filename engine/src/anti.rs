@@ -43,7 +43,10 @@ impl CapTech {
     }
     /// keyless solvable (ghostrise stack) ya external chahiye
     pub fn keyless(&self) -> bool {
-        matches!(self, CapTech::RecaptchaV2 | CapTech::TextImage | CapTech::Slider)
+        matches!(
+            self,
+            CapTech::RecaptchaV2 | CapTech::TextImage | CapTech::Slider
+        )
     }
 }
 
@@ -51,9 +54,9 @@ impl CapTech {
 pub struct WallInfo {
     pub tech: CapTech,
     pub sitekey: Option<String>,
-    pub gt_key: Option<String>,       // geetest
-    pub public_key: Option<String>,   // funcaptcha
-    pub hint: String,                  // widget selector/data hint
+    pub gt_key: Option<String>,     // geetest
+    pub public_key: Option<String>, // funcaptcha
+    pub hint: String,               // widget selector/data hint
 }
 
 /// Page pe captcha tech scan — DOM traversal, zero network.
@@ -97,37 +100,69 @@ fn walk(n: &Node, out: &mut Vec<WallInfo>) {
         let s = src.to_ascii_lowercase();
         let full = src.to_string();
         if s.contains("recaptcha") && s.contains("enterprise") {
-            out.push(WallInfo { tech: CapTech::RecaptchaEnterprise,
-                sitekey: data_sitekey.map(|k| k.to_string()), gt_key: None, public_key: None,
-                hint: format!("script/iframe: {}", &full[..full.len().min(60)]) });
+            out.push(WallInfo {
+                tech: CapTech::RecaptchaEnterprise,
+                sitekey: data_sitekey.map(|k| k.to_string()),
+                gt_key: None,
+                public_key: None,
+                hint: format!("script/iframe: {}", &full[..full.len().min(60)]),
+            });
         } else if s.contains("recaptcha") {
-            out.push(WallInfo { tech: CapTech::RecaptchaV2,
-                sitekey: data_sitekey.map(|k| k.to_string()), gt_key: None, public_key: None,
-                hint: format!("script/iframe: {}", &full[..full.len().min(60)]) });
+            out.push(WallInfo {
+                tech: CapTech::RecaptchaV2,
+                sitekey: data_sitekey.map(|k| k.to_string()),
+                gt_key: None,
+                public_key: None,
+                hint: format!("script/iframe: {}", &full[..full.len().min(60)]),
+            });
         } else if s.contains("hcaptcha") {
-            out.push(WallInfo { tech: CapTech::Hcaptcha,
-                sitekey: data_sitekey.map(|k| k.to_string()), gt_key: None, public_key: None,
-                hint: format!("script/iframe: {}", &full[..full.len().min(60)]) });
+            out.push(WallInfo {
+                tech: CapTech::Hcaptcha,
+                sitekey: data_sitekey.map(|k| k.to_string()),
+                gt_key: None,
+                public_key: None,
+                hint: format!("script/iframe: {}", &full[..full.len().min(60)]),
+            });
         } else if s.contains("challenges.cloudflare.com") {
-            out.push(WallInfo { tech: CapTech::Turnstile,
-                sitekey: data_sitekey.map(|k| k.to_string()), gt_key: None, public_key: None,
-                hint: format!("script/iframe: {}", &full[..full.len().min(60)]) });
+            out.push(WallInfo {
+                tech: CapTech::Turnstile,
+                sitekey: data_sitekey.map(|k| k.to_string()),
+                gt_key: None,
+                public_key: None,
+                hint: format!("script/iframe: {}", &full[..full.len().min(60)]),
+            });
         } else if s.contains("challenge.amazonaws") {
-            out.push(WallInfo { tech: CapTech::AwsWaf, sitekey: None,
-                gt_key: None, public_key: None,
-                hint: format!("script/iframe: {}", &full[..full.len().min(60)]) });
+            out.push(WallInfo {
+                tech: CapTech::AwsWaf,
+                sitekey: None,
+                gt_key: None,
+                public_key: None,
+                hint: format!("script/iframe: {}", &full[..full.len().min(60)]),
+            });
         } else if s.contains("geetest") {
-            out.push(WallInfo { tech: CapTech::GeeTest, sitekey: None,
-                gt_key: n.attr("data-gt").map(|g| g.to_string()), public_key: None,
-                hint: format!("script/iframe: {}", &full[..full.len().min(60)]) });
+            out.push(WallInfo {
+                tech: CapTech::GeeTest,
+                sitekey: None,
+                gt_key: n.attr("data-gt").map(|g| g.to_string()),
+                public_key: None,
+                hint: format!("script/iframe: {}", &full[..full.len().min(60)]),
+            });
         } else if s.contains("funcaptcha") || s.contains("arkoselabs") {
-            out.push(WallInfo { tech: CapTech::FunCaptcha, sitekey: None,
-                gt_key: None, public_key: data_sitekey.map(|k| k.to_string()),
-                hint: format!("script/iframe: {}", &full[..full.len().min(60)]) });
+            out.push(WallInfo {
+                tech: CapTech::FunCaptcha,
+                sitekey: None,
+                gt_key: None,
+                public_key: data_sitekey.map(|k| k.to_string()),
+                hint: format!("script/iframe: {}", &full[..full.len().min(60)]),
+            });
         } else if s.contains("datadome") {
-            out.push(WallInfo { tech: CapTech::DataDome, sitekey: None,
-                gt_key: None, public_key: None,
-                hint: format!("script/iframe: {}", &full[..full.len().min(60)]) });
+            out.push(WallInfo {
+                tech: CapTech::DataDome,
+                sitekey: None,
+                gt_key: None,
+                public_key: None,
+                hint: format!("script/iframe: {}", &full[..full.len().min(60)]),
+            });
         }
     }
     // turnstile widget div (.cf-turnstile) + recaptcha/hcaptcha widget divs
@@ -162,8 +197,10 @@ fn walk(n: &Node, out: &mut Vec<WallInfo>) {
     // hidden challenge-response inputs (managed mode markers)
     if tag == "input" {
         let name = n.attr("name").unwrap_or("");
-        if name == "cf-turnstile-response" || name == "g-recaptcha-response"
-            || name == "h-captcha-response" || name == "arkose_token"
+        if name == "cf-turnstile-response"
+            || name == "g-recaptcha-response"
+            || name == "h-captcha-response"
+            || name == "arkose_token"
         {
             let tech = if name.starts_with("cf-") {
                 CapTech::CloudflareManaged
@@ -174,34 +211,51 @@ fn walk(n: &Node, out: &mut Vec<WallInfo>) {
             } else {
                 CapTech::FunCaptcha
             };
-            out.push(WallInfo { tech, sitekey: None, gt_key: None,
-                public_key: None, hint: format!("hidden input: {}", name) });
+            out.push(WallInfo {
+                tech,
+                sitekey: None,
+                gt_key: None,
+                public_key: None,
+                hint: format!("hidden input: {}", name),
+            });
         }
     }
     // meta-refresh interstitial
     if tag == "meta" {
         let http = n.attr("http-equiv").unwrap_or("");
         let content = n.attr("content").unwrap_or("");
-        if http.eq_ignore_ascii_case("refresh") && content.contains("captcha")
-        {
-            out.push(WallInfo { tech: CapTech::Interstitial, sitekey: None,
-                gt_key: None, public_key: None,
-                hint: format!("meta-refresh: {}", &content[..content.len().min(50)]) });
+        if http.eq_ignore_ascii_case("refresh") && content.contains("captcha") {
+            out.push(WallInfo {
+                tech: CapTech::Interstitial,
+                sitekey: None,
+                gt_key: None,
+                public_key: None,
+                hint: format!("meta-refresh: {}", &content[..content.len().min(50)]),
+            });
         }
     }
     // classic text/image captcha (img with captcha hint in src/alt)
     if tag == "img" {
         let hay = format!("{} {}", src, n.attr("alt").unwrap_or("")).to_ascii_lowercase();
         if hay.contains("captcha") && !hay.contains("recaptcha") {
-            out.push(WallInfo { tech: CapTech::TextImage, sitekey: None,
-                gt_key: None, public_key: None,
-                hint: format!("img: {}", &src[..src.len().min(50)]) });
+            out.push(WallInfo {
+                tech: CapTech::TextImage,
+                sitekey: None,
+                gt_key: None,
+                public_key: None,
+                hint: format!("img: {}", &src[..src.len().min(50)]),
+            });
         }
     }
     // slider pattern (class heuristics)
     if cls.contains("slider") && (cls.contains("captcha") || cls.contains("verify")) {
-        out.push(WallInfo { tech: CapTech::Slider, sitekey: None,
-            gt_key: None, public_key: None, hint: format!("class: {}", cls) });
+        out.push(WallInfo {
+            tech: CapTech::Slider,
+            sitekey: None,
+            gt_key: None,
+            public_key: None,
+            hint: format!("class: {}", cls),
+        });
     }
 
     for c in &n.children {
@@ -251,20 +305,38 @@ mod tests {
         let p = Page::parse(html);
         let d = detect(&p);
         let names: Vec<&str> = d.iter().map(|w| w.tech.name()).collect();
-        for expect in ["recaptcha-v2", "hcaptcha", "turnstile", "geetest",
-                       "text-image", "cf-managed-challenge"] {
+        for expect in [
+            "recaptcha-v2",
+            "hcaptcha",
+            "turnstile",
+            "geetest",
+            "text-image",
+            "cf-managed-challenge",
+        ] {
             assert!(names.contains(&expect), "missing {} in {:?}", expect, names);
         }
         // sitekey extraction — script wala + div wala dono me se koi ek
         // (dedup tech-level pe hota hai, div ka sitekey ya script ka)
-        let rc_keys: Vec<Option<&str>> = d.iter()
+        let rc_keys: Vec<Option<&str>> = d
+            .iter()
             .filter(|w| w.tech == CapTech::RecaptchaV2)
-            .map(|w| w.sitekey.as_deref()).collect();
-        assert!(rc_keys.contains(&Some("KEY123")), "no KEY123 in {:?}", rc_keys);
-        let ts_keys: Vec<Option<&str>> = d.iter()
+            .map(|w| w.sitekey.as_deref())
+            .collect();
+        assert!(
+            rc_keys.contains(&Some("KEY123")),
+            "no KEY123 in {:?}",
+            rc_keys
+        );
+        let ts_keys: Vec<Option<&str>> = d
+            .iter()
             .filter(|w| w.tech == CapTech::Turnstile)
-            .map(|w| w.sitekey.as_deref()).collect();
-        assert!(ts_keys.contains(&Some("TS456")), "no TS456 in {:?}", ts_keys);
+            .map(|w| w.sitekey.as_deref())
+            .collect();
+        assert!(
+            ts_keys.contains(&Some("TS456")),
+            "no TS456 in {:?}",
+            ts_keys
+        );
     }
 
     #[test]
