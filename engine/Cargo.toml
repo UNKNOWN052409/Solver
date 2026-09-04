@@ -4,4 +4,16 @@ version = "0.1.0"
 edition = "2021"
 
 # ZERO external deps — sab scratch. Ye wada hai.
+# (sirf `vault` feature ke saath crypto deps aati hain, neeche)
 [dependencies]
+
+# M3 vault: AES-256-GCM password manager — OPTIONAL.
+# Default build zero-dep rehta hai; `--features vault` ke saath:
+#   aes-gcm — pure-Rust RustCrypto AEAD (hand-rolled cipher nahi)
+#   sha2    — key-derivation chain (SHA-256 iterated 100k)
+aes-gcm = { version = "0.10", optional = true }
+sha2 = { version = "0.10", optional = true }
+
+[features]
+# engine ke bina feature ke ZERO external dep wada intact
+vault = ["dep:aes-gcm", "dep:sha2"]

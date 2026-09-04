@@ -17,15 +17,23 @@ use std::collections::BTreeMap;
 // (engine ke andar M1 wale core + naye layers: human render + anti-captcha)
 
 pub mod anti;
+pub mod form;
 pub mod human;
 pub mod net;
+#[cfg(feature = "vault")]
+pub mod vault;
 
 pub use anti::{CapTech, WallInfo};
-pub use human::{render, resolve_url, GhostShell};
+pub use form::{
+    api_key, FormData, FormSubmit, LoginFlow, LoginStep, Method, OAuthFlow, Request, Response,
+};
+pub use human::{render, GhostShell, resolve_url};
 pub use net::{
     b64_encode, host_core, url_host, AuthHeader, Cookie, CookieJar, ProxyEndpoint, ProxyRoute,
     Resp, Session, SessionDoc, Transport,
 };
+#[cfg(feature = "vault")]
+pub use vault::{Entry as VaultEntry, Vault, VaultError};
 
 // ---------------------------------------------------------------- tokens --
 #[derive(Debug, Clone, PartialEq)]
