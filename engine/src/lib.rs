@@ -128,7 +128,9 @@ pub fn tokenize(src: &str) -> Vec<Tok> {
                     }
                     if b[k] == b'/' && k + 1 < n && b[k + 1] == b'>' {
                         self_closing = true;
-                        k += 2;
+                        // sirf '/' consume — closing-loop '>' pe khud
+                        // rukega (k+=2 double-advance hota tha — dogfood)
+                        k += 1;
                         break;
                     }
                     // attr name
@@ -172,9 +174,13 @@ pub fn tokenize(src: &str) -> Vec<Tok> {
                         attrs.push((an, decode_entities(&av)));
                     }
                 }
-                // closing '>' consume
-                while k < n && b[k] != b'>' {
-                    k += 1;
+                // closing '>' consume — self_closing '/>' already
+                // consumed (WARN: bina is check ke next tag ka takra
+                // ho jata — dogfood self-test ne pakda tha)
+                if !self_closing {
+                    while k < n && b[k] != b'>' {
+                        k += 1;
+                    }
                 }
                 i = if k < n { k + 1 } else { n };
                 out.push(Tok::OpenTag {
@@ -541,6 +547,17 @@ impl Page {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selfclose_then_form_regression() {
+        // dogfood RE self-test ne pakda tha: <meta/> ke baad form swallow
+        let html = "<meta name=\"a\" content=\"b\"/><form action=\"/login\"><input name=\"email\"/></form>";
+        let p = Page::parse(html);
+        assert_eq!(p.forms().len(), 1, "form swallowed after self-closing tag");
+        let html2 = "<meta a=\"1\"/><form action=\"/x\"><input name=\"q\"/></form>";
+        let p2 = Page::parse(html2);
+        assert_eq!(p2.forms().len(), 1);
+    }
 
     #[test]
     fn tokenize_basic() {
