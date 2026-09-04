@@ -16,6 +16,8 @@ use std::collections::BTreeMap;
 // ---------------------------------------------------------------- tokens --
 // (engine ke andar M1 wale core + naye layers: human render + anti-captcha)
 
+pub mod adaptive;
+pub mod drl;
 pub mod anti;
 pub mod form;
 pub mod human;
