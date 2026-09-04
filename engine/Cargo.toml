@@ -1,0 +1,7 @@
+[package]
+name = "ghostengine"
+version = "0.1.0"
+edition = "2021"
+
+# ZERO external deps — sab scratch. Ye wada hai.
+[dependencies]
