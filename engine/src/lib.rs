@@ -19,6 +19,8 @@ use std::collections::BTreeMap;
 pub mod anti;
 pub mod form;
 pub mod human;
+pub mod js;
+pub mod render;
 pub mod net;
 #[cfg(feature = "vault")]
 pub mod vault;
