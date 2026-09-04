@@ -23,7 +23,7 @@ case "${1:-status}" in
         echo "[xvfb] missing — install: apt-get download xvfb xserver-common; dpkg -x ... rootx/ (README)"
         exit 1
     fi
-    LD_LIBRARY_PATH="$RX/usr/lib/aarch64-linux-gnu:$RX/usr/lib:$LD_LIBRARY_PATH" \
+    LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:$RX/usr/lib/aarch64-linux-gnu:$RX/usr/lib" \
         "$RX/usr/bin/Xvfb" :99 -screen 0 1280x800x24 -nolisten tcp >> "$LOG" 2>&1 &
     echo $! > "$PIDF"
     sleep 1.5

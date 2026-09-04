@@ -25,3 +25,4 @@ data/pt/
 data/tiles/
 engine/target/
 tui/target/
+gui/target/

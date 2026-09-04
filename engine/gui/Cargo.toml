@@ -1,0 +1,9 @@
+[package]
+name = "ghostbrowse-gui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+ghostengine = { path = ".." }
+egui = "0.31"
+eframe = { version = "0.31", default-features = false, features = ["accesskit", "wayland", "x11", "glow"] }

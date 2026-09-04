@@ -1,0 +1,12 @@
+/home/kali/Solver/engine/gui/target/release/deps/ecolor-061a53f9cb9607a7.d: /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/lib.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/color32.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/hsva_gamma.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/hsva.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/rgba.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/hex_color_runtime.rs
+
+/home/kali/Solver/engine/gui/target/release/deps/libecolor-061a53f9cb9607a7.rlib: /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/lib.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/color32.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/hsva_gamma.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/hsva.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/rgba.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/hex_color_runtime.rs
+
+/home/kali/Solver/engine/gui/target/release/deps/libecolor-061a53f9cb9607a7.rmeta: /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/lib.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/color32.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/hsva_gamma.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/hsva.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/rgba.rs /home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/hex_color_runtime.rs
+
+/home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/lib.rs:
+/home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/color32.rs:
+/home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/hsva_gamma.rs:
+/home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/hsva.rs:
+/home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/rgba.rs:
+/home/kali/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ecolor-0.31.1/src/hex_color_runtime.rs:
