@@ -1,1 +1,0 @@
-/home/kali/Solver/engine/gui/target/release/ghostbrowse-gui: /home/kali/Solver/engine/gui/src/main.rs /home/kali/Solver/engine/src/anti.rs /home/kali/Solver/engine/src/human.rs /home/kali/Solver/engine/src/lib.rs
