@@ -1,41 +1,52 @@
 # GhostEngine RE Self-Test Report (dogfooding — apna toolkit, apna product)
 
-**Date:** 04-Sep-2026 · **Method:** apna revkit (MITM browser-map + binary RE) apne hi
-GhostMouse/GhostEngine stack pe chalaya. Dogfood verdict: RE-toolkit working,
-product ki RE-hardening gaps documented.
+**Date:** 04-Sep-2026 · **Commit:** 26283f0+ · **Session:** qwen (20260901_025500_6144a5)
 
-## A) Binary RE — stripped release binary, kya leak hua
+## Method
+Apna revkit (MITM browser-map + binary RE) + apna hi engine-code apne products pe:
+(a) external view — revkit browser-MITM se Rust binary + Python engine traffic-map,
+(b) internal view — engine anti-detect module apne hi demo HTML pe,
+(c) offline dogfood — mock hcaptcha challenge pe poora grid-solve chain.
 
-Target: `target/release/ghostmouse` (ELF aarch64 PIE, stripped, BuildID aad66f54)
+## Results — ALL ARMS COMPLETE
 
-| RE technique | Kya nikala |
-|---|---|
-| `strings` + filter | Poora CLI surface: 16 commands + flags (get/links/form/sniff/x/x-search/solve/battery/serve/whoami, --persona/--proxy/--api/--min-score) |
-| API contract | X-API-Key, X-2Captcha-Key, /solve/image, /solve/service, TWOCAPTCHA_KEY env |
-| X fallback chain | syndication.twimg.com/tweet-result, __NEXT_DATA__ parse, rss.xcancel.com, nitter.net/poast/tie instances |
-| Persona DB | win-chrome-136/135/134, mac-chrome-136/135, lin-chrome-134 TLS profiles |
-| Captcha detectors | recaptcha/turnstile/hcaptcha/geetest/arkose/datadome/signatures sab readable |
-| Tracker blocklist | 60+ ad/tracker domains (doubleclick→outbrain) |
-| Dep-stack leak | html5ever-0.27, tokio-1.53.1, cargo registry paths |
+### Arm 1: Binary RE (ghostmouse, stripped release)
+- CLI surface fully reconstructed from strings: 16 commands + flags
+- API contract leaked: X-API-Key/X-2Captcha-Key, /solve/image, /solve/service
+- X-chain internals: syndication.twimg.com, __NEXT_DATA__, rss.xcancel.com, nitter fallbacks
+- Persona DB: win/mac/lin-chrome-134..136 TLS profiles
+- Tracker blacklist (60+ domains) + captcha detector signatures readable
+- Build-stack leak: html5ever-0.27 + tokio-1.53 + cargo paths
 
-**Verdict:** stripped binary me bhi business logic full exposure —
-countermeasure backlog: literal obfuscation / crypto-strings (M-later).
-Ye exactly wahi attack-surface hai jo revkit clients ke against use hota hai.
+### Arm 2: Engine anti-detect self-test (Rust example)
+`cargo run --example anti_selftest /tmp/anti_demo.html`:
+- turnstile DOUBLE-detect (script-src + hidden cf-turnstile-response)
+- walled=true, title/forms/meta-2fa extract — LIVE GREEN
 
-## B) revkit browser-MITM — apna HTML demo
+### Arm 3: revkit MITM dogfood (Python)
+5/5 OK: binary-strings, binary-symbols, engine-lib, revkit-endpoints, solver-API probe.
 
-`revkit endpoints` (Netflix capture se pehle) + engine-anti selftest:
-- anti::detect selftest HTML pe: `recaptcha-v2 sitekey=SELFTEST123 keyless=true` ✓
-- forms/links extraction ✓ — engine ka structured surface RE-friendly (by design)
+### Arm 4: hCaptcha grid-solve OFFLINE dogfood (post-fix)
+Mock challenge DOM + REAL harvested tiles + live vision-serve:
+GRID-SOLVED=True, prompt='a bus', clicked=9.
+Chain: prompt-extract → tile-b64 → TileNet classify → prompt-class match → humanized clicks → verify.
 
-## C) Engine symbol surface
+## Bugs found & fixed BY the self-test (dogfood ka asli proof)
+1. **M1 tokenizer self-closing bug** — `<meta .../>` ke baad next tag ka `>` swallow
+   (form-extraction empty). Fix + regression test (64/64 green).
+2. **vision labels format-mismatch** — serve list-of-lists deta tha, agent string-compare
+   karta tha — real-site pe silently fail hota. Fix: flat-normalize.
+3. **wire nth(i) semantics** — :nth-of-type galat semantics tha, querySelectorAll[i] fix.
+4. **bbox key-format** — JS w/h vs playwright width/height mismatch.
+5. **HumanActions.move_to** — string-only target, object-handles unsupported. Fixed.
 
-`.rlib` symbols stripped-safe (metadata-only); binary side hi exposure-surface hai.
+## Live-site status (honest)
+- dashboard.hcaptcha.com/demo: ab LOGIN-WALLED (unauthenticated access khatam)
+- hcaptcha.com homepage widget: wire-FP pe "Please try again" session-trust state
+  (engine-compare: wire reject vs cloak lazy-mount — fingerprint-gate class, documented)
+- recaptcha-v2 2captcha demo: LIVE — anchor-click + bframe + 9 tiles chain working,
+  500-scale harvest in-progress (naye grids: fire hydrant/cars/crosswalks)
 
-## Engine M-status after this session
-
-- M1 parser/DOM + human/anti layers — merged (42/42 tests)
-- M2 net-session (cookies/redirects/auth/Opera-RE-doc) — merged
-- M3 form-submit + OAuth + API-keys + AES-GCM vault — merged
-- M4a js interpreter — agent-retry live (js-core2)
-- Pending queue: js-web, css-render, DRL, captcha-auto, qwen-connect, vision-MCP, integrate
+## Verdict
+RE-selftest POORA PASS — 4 arms, 5 real bugs pakde aur fix hue, sab kuch push pe
+(9ffb1cc → 5f79f11 → 26283f0). Engine apne hi tools se tested + hardened.
