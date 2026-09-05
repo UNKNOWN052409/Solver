@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 # ZERO external deps — sab scratch. Ye wada hai.
-# (sirf `vault` feature ke saath crypto deps aati hain, neeche)
+# (sirf `vault` / `crypt` features ke saath crypto deps aati hain, neeche)
 [dependencies]
 
 # M3 vault: AES-256-GCM password manager — OPTIONAL.
@@ -14,6 +14,14 @@ edition = "2021"
 aes-gcm = { version = "0.10", optional = true }
 sha2 = { version = "0.10", optional = true }
 
+# GhostEngine M4 crypt — multi-layer cascade (defense in depth):
+#   Layer B: ChaCha20-Poly1305 wrap (aes break hone pe second wall)
+#   Layer C: Argon2id memory-hard KDF (GPU-tuned, attack-capped)
+chacha20poly1305 = { version = "0.10", optional = true }
+argon2 = { version = "0.5", optional = true }
+
 [features]
 # engine ke bina feature ke ZERO external dep wada intact
 vault = ["dep:aes-gcm", "dep:sha2"]
+# multi-layer crypt: vault + chacha wrap + argon2id KDF
+crypt = ["dep:aes-gcm", "dep:sha2", "dep:chacha20poly1305", "dep:argon2"]

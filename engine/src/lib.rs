@@ -26,6 +26,8 @@ pub mod render;
 pub mod net;
 #[cfg(feature = "vault")]
 pub mod vault;
+#[cfg(feature = "crypt")]
+pub mod crypt;
 
 pub use anti::{CapTech, WallInfo};
 pub use form::{
