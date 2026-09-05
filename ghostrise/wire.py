@@ -32,6 +32,273 @@ import urllib.request
 _OS_ENV = {"MOZ_DISABLE_CONTENT_SANDBOX": "1", "DISPLAY": os.environ.get("DISPLAY", "")}
 
 
+class _WireFrame:
+    """Playwright-frame-lite: url + tiny locator-surface for captcha_agent."""
+
+    def __init__(self, wire, frame_id, url):
+        self.wire = wire
+        self.frame_id = frame_id
+        self.url = url or ""
+
+    def evaluate(self, expr):
+        return self.wire.frame_eval(self.frame_id, expr)
+
+    @property
+    def content(self):
+        return self.wire.frame_eval(self.frame_id, "document.documentElement.outerHTML") or ""
+
+    def locator(self, sel):
+        """Playwright-lite locator: JS querySelector — evaluate/rects."""
+        return _WireLocator(self.wire, self.frame_id, sel)
+
+    def wait_for_selector(self, sel, timeout=4000):
+        """Playwright-lite: selector ka wait — mila to _WireLocator."""
+        import time as _t
+        deadline = _t.time() + timeout / 1000
+        while _t.time() < deadline:
+            if self.locator(sel).count() > 0:
+                return _WireHandle(self.wire, self.frame_id, sel)
+            _t.sleep(0.25)
+        return None
+
+    def find_and_click(self, sel, human=None):
+        """JS se element locate -> absolute coords -> WireMouse click."""
+        import json as _j
+        pos_json = self.wire.frame_eval(
+            self.frame_id,
+            "JSON.stringify((function(){var e=document.querySelector(%r);"
+            "if(!e)return null;var r=e.getBoundingClientRect();"
+            "return {x:r.x+window.scrollX,y:r.y+window.scrollY,width:r.width,height:r.height};})())" % sel,
+        )
+        if not pos_json:
+            return False
+        try:
+            pos = _j.loads(pos_json)
+        except Exception:
+            return False
+        # iframe ka offset add karo — frame_eval me coords frame-local
+        off = self.wire.frame_offset(self.frame_id)
+        cx = pos["x"] + pos["width"] / 2 + off[0]
+        cy = pos["y"] + pos["height"] / 2 + off[1]
+        m = human or self.wire.mouse
+        m.click(cx, cy)
+        return True
+
+
+class _WireHandle:
+    """ElementHandle-lite: bounding_box + content_frame + click-coords."""
+
+    def __init__(self, wire, frame_id, sel):
+        self.wire = wire
+        self.frame_id = frame_id
+        self.sel = sel
+
+    def bounding_box(self):
+        import json as _j
+        raw = self.wire.frame_eval(
+            self.frame_id,
+            "JSON.stringify((function(){var e=document.querySelector(%r);"
+            "if(!e)return null;var r=e.getBoundingClientRect();"
+            "return {x:r.x+window.scrollX,y:r.y+window.scrollY,"
+            "width:r.width,height:r.height};})())" % self.sel,
+        )
+        if not raw:
+            return None
+        try:
+            return _j.loads(raw)
+        except Exception:
+            return None
+
+    def content_frame(self):
+        """iframe-element ho to uska _WireFrame URL-match se."""
+        # nested frame dhoondo: page.frames me jiska parent ye frame hai
+        # wire me parent-info nahi — URL se: iframe ka src attribute
+        src = self.wire.frame_eval(
+            self.frame_id,
+            "document.querySelector(%r)?.getAttribute('src') || ''" % self.sel,
+        )
+        if not src:
+            return None
+        base = src.split("?")[0]
+        for f in self.wire.frames():
+            if f.url and f.url.split("?")[0].startswith(base[:50]):
+                return f
+        return None
+
+
+class _WireLocator:
+    """querySelector-lite: evaluate/inner_text/rects — captcha-agent surface.
+
+    Playwright-chain compatible: .first.inner_text(), .nth(i), .count()."""
+
+    def __init__(self, wire, frame_id, sel):
+        self.wire = wire
+        self.frame_id = frame_id
+        self.sel = sel
+
+    @property
+    def first(self):
+        return self  # single-elem semantics — inner_text pehle elem ka
+
+    def nth(self, i):
+        return _WireLocatorIndexed(self.wire, self.frame_id, self.sel, i)
+
+    def _base_sel(self):
+        return self.sel
+
+    def inner_text(self, timeout=2000):
+        return (
+            self.wire.frame_eval(
+                self.frame_id,
+                "document.querySelector(%r)?.innerText || ''" % self._base_sel(),
+            )
+            or ""
+        )
+
+    def get_attribute(self, name, timeout=1500):
+        return self.wire.frame_eval(
+            self.frame_id,
+            "document.querySelector(%r)?.getAttribute(%r) || null" % (self._base_sel(), name),
+        )
+
+    def locator(self, sel):
+        return _WireLocator(self.wire, self.frame_id, f"{self.sel} {sel}")
+
+    def click(self, human=None):
+        """JS-rect -> absolute coords -> WireMouse click."""
+        import json as _j
+        raw = self.wire.frame_eval(
+            self.frame_id,
+            "JSON.stringify((function(){var e=document.querySelector(%r);"
+            "if(!e)return null;var r=e.getBoundingClientRect();"
+            "return {x:r.x+window.scrollX,y:r.y+window.scrollY,width:r.width,height:r.height};})())"
+            % self._base_sel(),
+        )
+        if not raw:
+            return False
+        try:
+            pos = _j.loads(raw)
+        except Exception:
+            return False
+        off = self.wire.frame_offset(self.frame_id)
+        cx = pos["x"] + pos["width"] / 2 + off[0]
+        cy = pos["y"] + pos["height"] / 2 + off[1]
+        m = human or self.wire.mouse
+        m.click(cx, cy)
+        return True
+
+    def evaluate(self, expr):
+        return self.wire.frame_eval(self.frame_id, expr)
+
+    def inner_text(self, timeout=2000):
+        return (
+            self.wire.frame_eval(
+                self.frame_id,
+                "document.querySelector(%r)?.innerText || ''" % self.sel,
+            )
+            or ""
+        )
+
+    def count(self):
+        v = self.wire.frame_eval(
+            self.frame_id, "document.querySelectorAll(%r).length" % self.sel
+        )
+        return int(v or 0)
+
+
+class _WireLocatorIndexed(_WireLocator):
+    """nth(i) — querySelectorAll[i] (playwright nth semantics)."""
+
+    def __init__(self, wire, frame_id, sel, idx):
+        super().__init__(wire, frame_id, sel)
+        self.idx = idx
+
+    def _base_sel(self):
+        return self.sel  # JS me index-apply hota hai
+
+    def _js_get(self, expr_fmt):
+        """expr_fmt me %s = selector, %d = index — JS wrapper."""
+        return self.wire.frame_eval(
+            self.frame_id,
+            expr_fmt % (self.sel, self.idx),
+        )
+
+    def inner_text(self, timeout=2000):
+        return (
+            self._js_get(
+                "var l=document.querySelectorAll(%r);l[%d]?l[%d].innerText:''"
+            )
+            or ""
+        )
+
+    def get_attribute(self, name, timeout=1500):
+        # selector+index+attr — 3-arg format
+        return self.wire.frame_eval(
+            self.frame_id,
+            "var l=document.querySelectorAll(%r);l[%d]?l[%d].getAttribute(%r):null"
+            % (self.sel, self.idx, self.idx, name),
+        )
+
+    def count(self):
+        v = self.wire.frame_eval(
+            self.frame_id, "document.querySelectorAll(%r).length" % self.sel
+        )
+        return int(v or 0)
+
+    def _rect(self):
+        import json as _j
+        raw = self.wire.frame_eval(
+            self.frame_id,
+            "JSON.stringify((function(){var l=document.querySelectorAll(%r);"
+            "var e=l[%d];if(!e)return null;var r=e.getBoundingClientRect();"
+            "return {x:r.x+window.scrollX,y:r.y+window.scrollY,width:r.width,height:r.height};})())"
+            % (self.sel, self.idx),
+        )
+        if not raw:
+            return None
+        try:
+            return _j.loads(raw)
+        except Exception:
+            return None
+
+    def bounding_box(self):
+        return self._rect()
+
+    def rects(self):
+        r = self._rect()
+        return [r] if r else []
+
+    def click(self, human=None):
+        pos = self._rect()
+        if not pos:
+            return False
+        off = self.wire.frame_offset(self.frame_id)
+        m = human or self.wire.mouse
+        m.click(pos["x"] + pos["width"] / 2 + off[0], pos["y"] + pos["height"] / 2 + off[1])
+        return True
+
+    def rects(self):
+        import json as _j
+        raw = self.wire.frame_eval(
+            self.frame_id,
+            "JSON.stringify(Array.from(document.querySelectorAll(%r))"
+            ".map(function(e){var r=e.getBoundingClientRect();"
+            "return {x:r.x+window.scrollX,y:r.y+window.scrollY,width:r.width,height:r.height};}))" % self.sel,
+        )
+        if not raw:
+            return []
+        try:
+            return _j.loads(raw)
+        except Exception:
+            return []
+
+    def get_attribute(self, name, timeout=1500):
+        return self.wire.frame_eval(
+            self.frame_id,
+            "document.querySelector(%r)?.getAttribute(%r) || null" % (self.sel, name),
+        )
+
+
 def _free_port():
     s = socket.socket()
     s.bind(("127.0.0.1", 0))
@@ -188,6 +455,99 @@ class GhostWire:
         if not hasattr(self, "_mouse"):
             self._mouse = WireMouse(self)
         return self._mouse
+
+    # ------------------------------------------------------------- frames --
+    def main_locator(self, sel):
+        """Main-page querySelector-lite locator (HumanActions surface)."""
+        return _WireLocator(self, self._sid_frame(), sel)
+
+    def _sid_frame(self):
+        """Main frame id — frames()[0] ya 'main'."""
+        try:
+            fs = self.frames()
+            if fs:
+                return fs[0].frame_id
+        except Exception:
+            pass
+        return ""
+
+    def frames(self):
+        """Frame-tree flatten: page + iframes ka (id, url) list."""
+        try:
+            tree = self._send("Page.getFrameTree", session_id=self._sid)
+            out = []
+
+            def walk(node):
+                f = node.get("frame", {})
+                out.append((f.get("id", ""), f.get("url", "")))
+                for c in node.get("childFrames", []):
+                    walk(c)
+
+            walk(tree.get("frameTree", {}))
+            # _WireFrame objects — locator-lite chahiye captcha_agent ko
+            return [_WireFrame(self, fid, url) for fid, url in out]
+        except Exception:
+            return []
+
+    def frame_eval(self, frame_id, expr):
+        """Frame-specific eval — har frame ka apna context hota hai."""
+        # executionContexts enumerate karke frame ka context dhoondo
+        try:
+            ctxs = self._send("Runtime.enable", session_id=self._sid)
+            # events me contexts aate hain — enable ke baad poll
+            import time as _t
+            _t.sleep(0.2)
+            # simplest robust route: Page.createIsolatedWorld per-frame
+            r = self._send(
+                "Page.createIsolatedWorld",
+                {"frameId": frame_id, "worldName": "ghost-wire-frame"},
+                session_id=self._sid,
+            )
+            cid = r.get("executionContextId")
+            if cid is None:
+                return None
+            ev = self._send(
+                "Runtime.evaluate",
+                {"expression": expr, "contextId": cid, "returnByValue": True},
+                session_id=self._sid,
+            )
+            return ev.get("result", {}).get("value")
+        except Exception:
+            return None
+
+    def frame_offset(self, frame_id, frame_url=""):
+        """Frame ka page-offset: parent-page iframe rects se URL-match.
+
+        Cross-origin frames me window.frameElement blocked hota hai —
+        isliye parent page pe iframes enumerate karke matching URL ka
+        rect use karte hain (hCaptcha pattern pe reliable)."""
+        import json as _j
+        # frame ka URL nikaalo agar diya nahi
+        if not frame_url:
+            for f in self.frames():
+                if f.frame_id == frame_id:
+                    frame_url = f.url
+                    break
+        if not frame_url or frame_url == self.evaluate("location.href"):
+            return [0.0, 0.0]
+        raw = self.evaluate(
+            "JSON.stringify(Array.from(document.querySelectorAll('iframe'))"
+            ".map(function(f){var r=f.getBoundingClientRect();"
+            "return {src:f.src||'',x:r.x+window.scrollX,y:r.y+window.scrollY,"
+            "width:r.width,height:r.height};}))"
+        )
+        if not raw:
+            return [0.0, 0.0]
+        try:
+            iframes = _j.loads(raw)
+        except Exception:
+            return [0.0, 0.0]
+        # URL prefix-match (query/hash differences ignore)
+        base = frame_url.split("?")[0]
+        for f in iframes:
+            if f["src"] and base.startswith(f["src"].split("?")[0][:60]):
+                return [f["x"], f["y"]]
+        return [0.0, 0.0]
 
     # ------------------------------------------------------------- close --
     def close(self):

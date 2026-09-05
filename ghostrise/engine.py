@@ -254,6 +254,67 @@ class _WirePage:
     def mouse(self):
         return self.wire.mouse
 
+    # ------------------------------------------------- frames (M4 wire) --
+    def locator(self, sel):
+        """Playwright-lite locator on the MAIN page (HumanActions surface)."""
+        return self.wire.main_locator(sel)
+
+    def wait_for_selector(self, sel, timeout=8000):
+        """Playwright-lite wait — main page selector."""
+        import time as _t
+        deadline = _t.time() + timeout / 1000
+        while _t.time() < deadline:
+            if self.locator(sel).count() > 0:
+                return _WireHandleProxy(self.wire, sel)
+            _t.sleep(0.25)
+        return None
+
+    # ------------------------------------------------- frames (M4 wire) --
+    @property
+    def frames(self):
+        """Page + nested iframes — CDP frame-tree se. Har frame ka
+        url + JS-eval apne context me (content-frame access)."""
+        return self.wire.frames()
+
+    def _frame_eval(self, frame_id, expr):
+        """Doosre frame me JS eval (CDP contextId per-frame)."""
+        return self.wire.frame_eval(frame_id, expr)
+
+
+class _WireHandleProxy:
+    """Main-page element handle — bounding_box + content_frame."""
+
+    def __init__(self, wire, sel):
+        self.wire = wire
+        self.sel = sel
+
+    def bounding_box(self):
+        import json as _j
+        raw = self.wire.evaluate(
+            "JSON.stringify((function(){var e=document.querySelector(%r);"
+            "if(!e)return null;var r=e.getBoundingClientRect();"
+            "return {x:r.x+window.scrollX,y:r.y+window.scrollY,"
+            "w:r.width,h:r.height};})())" % self.sel
+        )
+        if not raw:
+            return None
+        try:
+            return _j.loads(raw)
+        except Exception:
+            return None
+
+    def content_frame(self):
+        src = self.wire.evaluate(
+            "document.querySelector(%r)?.getAttribute('src') || ''" % self.sel
+        )
+        if not src:
+            return None
+        base = src.split("?")[0]
+        for f in self.wire.frames():
+            if f.url and f.url.split("?")[0].startswith(base[:50]):
+                return f
+        return None
+
 
 class _WireCompat:
     """GhostWire ko GhostSession browser-interface me adapt karta hai."""

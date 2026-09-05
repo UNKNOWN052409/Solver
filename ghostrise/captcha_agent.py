@@ -205,6 +205,28 @@ def _solver_audio_ocr(page, audio_url):
     return None
 
 
+# hCaptcha prompt -> TileNet class map (keyless grid-solve)
+_HC_PROMPT_CLASSES = [
+    ("bus", "a bus"),
+    ("bicycle", "a bicycle"),
+    ("fire hydrant", "fire hydrant"),
+    ("hydrant", "fire hydrant"),
+    ("taxi", "a taxi"),
+    ("crosswalk", "a crosswalk"),
+    ("cross walk", "a crosswalk"),
+    ("chimney", "a chimney"),
+    ("car", "a car"),
+    ("truck", "a truck"),
+    ("motorcycle", "motorcycle"),
+    ("boat", "a boat"),
+    ("train", "a train"),
+    ("airplane", "an airplane"),
+    ("bridge", "a bridge"),
+    ("mountain", "a mountain"),
+    ("river", "a river"),
+]
+
+
 def solve_hcaptcha(page, human, timeout=20000):
     """Checkbox click. Grid challenge aaya to local image-OCR try, warna
     human-in-loop note (keyless hi rehta hai)."""
@@ -224,8 +246,116 @@ def solve_hcaptcha(page, human, timeout=20000):
     if _click_box(fr, human, HCAPTCHA["box"]):
         if _is_solved(fr, HCAPTCHA["solved"], timeout=timeout):
             return True, "hcaptcha clicked + verified"
-    # grid challenge? — prompt kya poocha, wo target images dhundo
+    # grid challenge — TileNet vision se solve: tiles classify,
+    # prompt-class match karke positive cells click
+    ok, msg = _hcaptcha_grid_solve(fr, human)
+    if ok:
+        return True, msg
     return False, "hcaptcha grid challenge — needs image pick (retry/OCR)"
+
+
+def _hcaptcha_grid_solve(fr, human, vision_url="http://127.0.0.1:8030", timeout=6000):
+    """Grid challenge: TileNet keyless vision se tiles classify -> click.
+
+    hCaptcha 3x3/4x4 grid me har cell ek <div class='task'> bg-image hai.
+    Vision-serve /classify ko tiles bhejo, prompt-class se match, positives
+    click. Keyless — koi 3rd-party captcha API nahi."""
+    import json as _json
+    import urllib.request as _ur
+    from base64 import b64encode
+
+    # 1) prompt nikaalo ("Please select each image containing a bus")
+    prompt = ""
+    try:
+        prompt = fr.locator(".prompt").first.inner_text(timeout=2000).strip()
+    except Exception:
+        try:
+            prompt = fr.locator(".task-prompt").first.inner_text(timeout=2000).strip()
+        except Exception:
+            prompt = ""
+    if not prompt:
+        return False, "grid: prompt not found"
+
+    # 2) tiles nikaalo (task-grid cells)
+    tiles = fr.locator(".task .image, .task-image, .task .image-wrapper")
+    n = tiles.count()
+    if n < 1:
+        # fallback: direct .task divs
+        tiles = fr.locator(".task")
+        n = tiles.count()
+    if n < 1:
+        return False, "grid: no tiles"
+
+    # 3) vision-serve pe classify — batch POST (bg-image b64s)
+    cells = []
+    for i in range(n):
+        try:
+            img = tiles.nth(i).locator("img").first
+            src = img.get_attribute("src", timeout=1500)
+            if src and src.startswith("data:"):
+                b64 = src.split(",", 1)[1]
+                cells.append((i, b64))
+                continue
+            style = tiles.nth(i).get_attribute("style", timeout=1500) or ""
+            m = re.search(r"url\([\'\"]?(data:image/[^\'\")]+)[\'\"]?\)", style)
+            if m:
+                b64 = m.group(1).split(",", 1)[1]
+                cells.append((i, b64))
+        except Exception:
+            continue
+    if not cells:
+        return False, "grid: no tile images extractable"
+
+    # batch classify
+    payload = _json.dumps(
+        {"tiles": [b64 for _, b64 in cells]}
+    ).encode()
+    try:
+        req = _ur.Request(
+            vision_url.rstrip("/") + "/classify",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with _ur.urlopen(req, timeout=timeout / 1000) as r:
+            out = _json.loads(r.read().decode())
+    except Exception as e:
+        return False, f"grid: vision-serve unreachable ({e})"
+
+    labels = out.get("labels", [])
+    # vision-serve list-of-lists deta hai (['a bus']) — flat karo
+    labels = [l[0] if isinstance(l, list) and l else l for l in labels]
+    if len(labels) != len(cells):
+        return False, f"grid: vision label-mismatch {len(labels)} vs {len(cells)}"
+
+    # 4) prompt-class match — prompt me jo poocha hai wo TileNet class
+    p = prompt.lower()
+    wanted = None
+    for kw, cls in _HC_PROMPT_CLASSES:
+        if kw in p:
+            wanted = cls
+            break
+    if wanted is None:
+        return False, f"grid: unknown prompt '{prompt[:40]}'"
+
+    # 5) positives click — humanized, grid-order me
+    clicked = 0
+    for (i, _), lab in zip(cells, labels):
+        if lab == wanted:
+            try:
+                human.click(tiles.nth(i))
+                clicked += 1
+            except Exception:
+                pass
+    if clicked == 0:
+        return False, "grid: no positives found"
+    # verify + skip button
+    try:
+        human.click(fr.locator(".button-submit"))
+    except Exception:
+        pass
+    if _is_solved(fr, HCAPTCHA["solved"], timeout=timeout):
+        return True, f"hcaptcha GRID-SOLVED via TileNet (prompt={wanted!r}, clicked={clicked})"
+    return False, "grid: clicked but not verified"
 
 
 def solve_turnstile(page, human, timeout=25000):

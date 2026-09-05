@@ -74,6 +74,14 @@ class WireMouse:
         self.x, self.y = float(x), float(y)
         return self
 
+    def down(self):
+        self._dispatch("mousePressed", self.x, self.y, button="left", clicks=1)
+        return self
+
+    def up(self):
+        self._dispatch("mouseReleased", self.x, self.y, button="left", clicks=1)
+        return self
+
     def click(self, x=None, y=None, hold=None):
         """Humanized click — move (agar coords diye) + press/release."""
         if x is not None and y is not None:

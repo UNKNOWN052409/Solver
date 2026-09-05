@@ -64,7 +64,14 @@ class HumanActions:
     # ---- low level -------------------------------------------------
 
     def move_to(self, target, overshoot=False):
-        box = self.page.locator(target).bounding_box()
+        # locator/handle OBJECT (wire _WireLocator) ya playwright-string
+        if hasattr(target, "bounding_box"):
+            box = target.bounding_box()
+        elif hasattr(target, "count"):  # wire locator — JS-rect fallback
+            rects = getattr(target, "rects", None)
+            box = rects()[0] if rects and rects() else None
+        else:
+            box = self.page.locator(target).bounding_box()
         if not box:
             raise ValueError(f"element not found: {target}")
         dest = {
