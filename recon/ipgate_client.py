@@ -18,7 +18,7 @@ import time
 import requests
 
 GATEWAY = "http://127.0.0.1:8899"
-WATCHDOG = "/home/kali/Solver/recon/watchdog.sh"
+WATCHDOG = "/home/kali/NeoSolver/recon/watchdog.sh"
 
 
 def ensure_gateway(max_wait=60):

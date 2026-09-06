@@ -4,7 +4,7 @@
 # survives reboots via @reboot entry. No process-pattern kills -
 # only port health checks decide, so it can never self-terminate.
 
-SOLVER=/home/kali/Solver
+SOLVER=/home/kali/NeoSolver
 LOG=/tmp/opencode/watchdog.log
 log() { echo "[$(date '+%m-%d %H:%M:%S')] $*" >> "$LOG"; }
 

@@ -311,18 +311,75 @@ class GhostWire:
     """Raw CDP client — chromium ko hamare messages se drive karte hain."""
 
     def __init__(self, headless=True, engine="chromium", profile=None,
-                 user_agent=None, extra_args=None):
+                 user_agent=None, extra_args=None, viewport=None,
+                 accelerated=None):
+        """GhostWire — raw-CDP chromium.
+
+        extra_args   : raw chromium flags appended to the launch command.
+        viewport     : dict {width, height, device_scale_factor} — high-DPI/4K
+                       support. Applied as --window-size + --force-device-scale-factor
+                       (and --headless window-size) so pages render at the
+                       requested resolution. Also reflected via Emulation on
+                       first goto() for non-headless.
+        accelerated  : None (auto) | True (force GPU/swiftshader) | False
+                       (force software rendering). When True we add chromium
+                       GPU offload hints: --enable-gpu, --use-gl=swiftshader
+                       (CPU-software GL — works headless in proot/CI) with
+                       ANGLE fallback. When False we add --disable-gpu.
+        """
         self.headless = headless
         self.engine = engine                    # chromium | firefox
         self.profile = profile or tempfile.mkdtemp(prefix="gw-")
         self.user_agent = user_agent or (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-        self.extra_args = extra_args or []
+        self.extra_args = list(extra_args or [])
+        self.viewport = dict(viewport or {})
+        self.accelerated = accelerated
         self._proc = None
         self._ws = None
         self._msg_id = 0
         self.port = None
+
+    # ------------------------------------------------- viewport / gpu ------ #
+    def _viewport_args(self) -> list:
+        """Chromium flags for a custom viewport (high-DPI / 4K).
+
+        3840x2160 @ deviceScaleFactor 2 -> --window-size=3840,2160 +
+        --force-device-scale-factor=2. In headless Chromium the window-size is
+        honored directly (there is no OS window chrome to account for), which
+        is exactly the path proot/CI use.
+        """
+        vp = self.viewport
+        if not vp:
+            return []
+        w = int(vp.get("width", 1920))
+        h = int(vp.get("height", 1080))
+        dsf = float(vp.get("device_scale_factor", 1))
+        args = [f"--window-size={w},{h}"]
+        if dsf != 1.0:
+            args.append(f"--force-device-scale-factor={dsf}")
+        return args
+
+    def _gpu_args(self) -> list:
+        """GPU / accelerated-rendering hints.
+
+        True  -> --enable-gpu + --use-gl=swiftshader (software OpenGL that
+                 runs headless in proot/CI where there is no real GPU driver).
+                 We do NOT pass --disable-gpu, and we ignore the GPU blocklist
+                 so swiftshader is actually used. ANGLE is chromium's default
+                 GL backend --use-gl=angle -> we leave it as a natural fallback
+                 if swiftshader init fails (chromium retries gracefully).
+        False -> --disable-gpu (CPU render).
+        None  -> no explicit GPU hint (auto: runtime.resolve decides).
+        """
+        if self.accelerated is False:
+            return ["--disable-gpu", "--disable-gpu-compositing"]
+        if self.accelerated is True:
+            return ["--enable-gpu", "--use-gl=swiftshader",
+                    "--enable-gpu-rasterization", "--ignore-gpu-blocklist",
+                    "--enable-unsafe-swiftshader"]
+        return []
 
     # ---------------------------------------------------------- launch --
     def __enter__(self):
@@ -353,6 +410,9 @@ class GhostWire:
         ]
         if self.headless:
             args.append("--headless=new")
+        # high-DPI viewport + GPU/accelerated hints
+        args += self._viewport_args()
+        args += self._gpu_args()
         args += self.extra_args
         env = dict(os.environ)
         env.update(_OS_ENV)
@@ -370,7 +430,7 @@ class GhostWire:
         raise RuntimeError("firefox raw-wire nahi — engine='chromium' use karo "
                            "(Firefox playwright-ladder me rehta hai)")
 
-    def _wait_devtools(self, timeout=15):
+    def _wait_devtools(self, timeout=50):
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
@@ -398,6 +458,10 @@ class GhostWire:
                 if "error" in raw:
                     raise RuntimeError(f"CDP {method}: {raw['error']}")
                 return raw.get("result", {})
+            # net-capture mode: Network.* events accumulate
+            meth = raw.get("method", "")
+            if getattr(self, "_net_capture_on", False) and meth.startswith("Network."):
+                self._net_events.append((meth, raw.get("params", {})))
 
     # ------------------------------------------------------------- page --
     def _target(self):
@@ -410,6 +474,46 @@ class GhostWire:
                 return s["sessionId"]
         raise RuntimeError("koi page target nahi")
 
+    # ------------------------------------------------------- net capture --
+    # ------------------------------------------------------- net capture --
+    def enable_net_capture(self):
+        """Network.enable + collect Network.* events via _send. USED for
+        qwen image/video-gen endpoint capture (network-info tool)."""
+        self._net_events = []
+        self._net_capture_on = True
+        try:
+            self._send("Network.enable", session_id=self._sid)
+        except Exception:
+            try:
+                self._send("Network.enable")
+            except Exception:
+                pass
+        return self
+
+    def net_events(self):
+        """Collected Network.* events — (method, params) list."""
+        return getattr(self, "_net_events", [])
+
+    def net_captured(self):
+        """responseReceived/requestWillBeSent filter — url/status/mime."""
+        out = []
+        for meth, p in self.net_events():
+            if meth == "Network.responseReceived":
+                r = p.get("response", {})
+                out.append({
+                    "url": r.get("url", "")[:200],
+                    "status": r.get("status"),
+                    "mime": r.get("mimeType", ""),
+                })
+            elif meth == "Network.requestWillBeSent":
+                rq = p.get("request", {})
+                out.append({
+                    "url": rq.get("url", "")[:200],
+                    "method": rq.get("method", "GET"),
+                })
+        return out
+
+    # ------------------------------------------------------- protocol pts --
     def goto(self, url, timeout=45000):
         sid = self._sid = getattr(self, "_sid", None) or self._target()
         # stealth patches pehle: navigator.webdriver hatao
@@ -427,6 +531,19 @@ class GhostWire:
                 )}, session_id=sid)
         except Exception:
             pass
+        # high-DPI viewport: enforce via CDP Emulation (reliable headless +
+        # headed, and the source of truth a page actually reads)
+        if self.viewport:
+            try:
+                self._send("Emulation.setDeviceMetricsOverride", {
+                    "width": int(self.viewport.get("width", 1280)),
+                    "height": int(self.viewport.get("height", 720)),
+                    "deviceScaleFactor":
+                        float(self.viewport.get("device_scale_factor", 1)),
+                    "mobile": False,
+                }, session_id=sid)
+            except Exception:
+                pass
         self._send("Page.navigate", {"url": url}, session_id=sid)
         deadline = time.time() + timeout / 1000
         while time.time() < deadline:
@@ -441,7 +558,8 @@ class GhostWire:
     def evaluate(self, expr):
         sid = getattr(self, "_sid", None) or self._target()
         r = self._send("Runtime.evaluate",
-                       {"expression": expr, "returnByValue": True},
+                       {"expression": expr, "returnByValue": True,
+                        "awaitPromise": True},
                        session_id=sid)
         return r.get("result", {}).get("value")
 
