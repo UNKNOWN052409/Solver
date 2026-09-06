@@ -95,8 +95,11 @@ class TesseractEngine(BaseEngine):
                 "(expected layout: {TESS_ROOT}/usr/bin/tesseract + "
                 "{TESS_ROOT}/usr/lib/aarch64-linux-gnu/libtesseract.so.5)."
             )
+        # Preprocess REAL captchas: CLAHE contrast-stretch + optional adaptive,
+        # so washed-out low-contrast text survives tesseract's threshold.
+        img = self._preprocess(image)
         with tempfile.NamedTemporaryFile(suffix=".png") as tmp:
-            cv2.imwrite(tmp.name, image)
+            cv2.imwrite(tmp.name, img)
             cmd = [
                 *cmd_prefix, tmp.name, "stdout",
                 "--oem", str(self.oem),
@@ -109,6 +112,21 @@ class TesseractEngine(BaseEngine):
                 cmd += ["--tessdata-dir", str(tessdata)]
             out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
         return out.stdout.strip().replace(" ", "").replace("\n", "")
+
+    @staticmethod
+    def _preprocess(image: np.ndarray) -> np.ndarray:
+        """CLAE contrast-stretch for OCR on real (often low-contrast) captchas."""
+        import numpy as np
+        if image.ndim == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = image
+        # rescale to full range first (washed-out images need it)
+        mn, mx = int(gray.min()), int(gray.max())
+        if mx > mn:
+            gray = cv2.normalize(gray, None, 0, 255, cv2.NORM_MINMAX)
+        clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+        return clahe.apply(gray)
 
     def diagnose(self) -> dict:
         """Health-check helper: what would happen if solve() ran now."""

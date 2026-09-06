@@ -19,10 +19,19 @@
 
 ## ❌ FAIL — not working, exact cause + fix
 
-### F1. Image captcha SOLVE accuracy — BROKEN (0/3 correct)
-- What: `solver.cli solve` runs but wrong: true `4m4xj`→`anpxy`, `q1q0e`→`qlqe`, `yvps0`→`yis0`.
-- Why: **no trained CNN/TileNet model** (no .pt/.onnx file) **and torch is not installed** in this env. The "ensemble" falls back to weak heuristic OCR with no learned weights.
-- Fix: install torch + train TileNet on harvested/hand labels serving `solver/vision/serve.py` `/classify` + `/rotate`. Then the keyless grid path in `captcha_agent._hcaptcha_grid_solve` gets a real brain.
+### F1. Image captcha SOLVE accuracy — PARTIAL (tesseract works, model absent)
+- **tesseract OCR now RUNS on real captchas** (rootless-installed 5.5.0 +
+  libleptonica.so.6 + eng.traineddata, CLAHE-preprocessed). Verified real:
+  `data/real_captchas/grid/map_*.png` → short reads (`we','rhe','oie',...`).
+  This is REAL: tesseract previously could not execute at all.
+- **Accuracy on hard map-text captchas still LOW** (~2.1 chars avg, no full
+  5-char reads). The dataset's ground-truth solver is a **TrOCR transformer**
+  model — default tesseract cannot reliably beat these low-contrast chaotic
+  backgrounds even after CLAHE.
+- Why: no trained CNN/TileNet/TrOCR model (.pt/.onnx) and torch not installed.
+- Fix: install torch + train TileNet/TrOCR on harvested labels serving
+  `solver/vision/serve.py` `/classify` + `/rotate`. Then the keyless grid path
+  in `captcha_agent._hcaptcha_grid_solve` gets a real brain.
 
 ### F2. reCAPTCHA v2 image-grid + hCaptcha grid semantic solve — BROKEN
 - Why: `captcha_agent.py` already wires grid→`vision-serve /classify` (TileNet) and token verification, but the serve backend has no trained model behind it.
