@@ -674,7 +674,7 @@ class GhostWire:
                 self._ws.close()
         except Exception:
             pass
-        if self._proc:
+        if getattr(self, "_proc", None):
             try:
                 self._proc.terminate()
                 self._proc.wait(timeout=5)
@@ -684,7 +684,8 @@ class GhostWire:
                 except Exception:
                     pass
         try:
-            shutil.rmtree(self.profile, ignore_errors=True)
+            if getattr(self, "profile", None):
+                shutil.rmtree(self.profile, ignore_errors=True)
         except Exception:
             pass
 

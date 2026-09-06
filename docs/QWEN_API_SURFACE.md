@@ -21,3 +21,10 @@
     "RGV587_ERROR": "Alibaba WAF punish (滑块/slider). Direct-fetch blocked (aliyun_waf_aa challenge HTML). Browser-context fetch + cookies + token = REQUIRED. Verified: page-context fetch returns 200/real, direct urllib returns WAF HTML."
   }
 }
+
+## Update 2 (09-06, post-capture)
+- `/api/v1/auths/` -> **401** (26-Aug config token EXPIRED). `/api/v2/users/status` -> 200 (public).
+- Image/video-gen endpoints **REQUIRE valid logged-in session** — guest mode hidden. Fresh qwen.ai login (Google OAuth ya email) chahiye; 5sim SMS-OTP is email route.
+- Anti-captcha confirmed: aliyun_waf_aa / RGV587_ERROR (Alibaba WAF). Browser-context fetch + valid token + cookies = mandatory. Direct urllib -> WAF HTML challenge.
+- GhostWire __new__-based manual attach: w.close() ab `getattr` guard ke saath (no _proc crash).
+- Subagent (sa-0-53a2b507) interrupted mid-capture (received signal 1 / SIGHUP) — session-kill infra fixed, capture khud complete kiya.
