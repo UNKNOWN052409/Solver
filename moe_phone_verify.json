@@ -1,0 +1,7 @@
+{
+  "file": "/home/kali/NeoSolver/solver/vision/moe_phone.py",
+  "total_params": 908654014,
+  "active_params": 30995902,
+  "forward_ms": 1248.6166159978893,
+  "config": "1b"
+}

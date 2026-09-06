@@ -1,0 +1,73 @@
+{
+  "real_files_total": 44,
+  "dedup_removed": 0,
+  "kept_total": 44,
+  "by_family": {
+    "grid": 20,
+    "rotation": 18,
+    "slider": 2,
+    "hcaptcha": 4
+  },
+  "splits": {
+    "train": 34,
+    "val": 10,
+    "val_frac": 0.25,
+    "train_by_family": {
+      "grid": 15,
+      "rotation": 14,
+      "slider": 2,
+      "hcaptcha": 3
+    },
+    "val_by_family": {
+      "grid": 5,
+      "rotation": 4,
+      "slider": 0,
+      "hcaptcha": 1
+    }
+  },
+  "targets_per_family": {
+    "grid": {
+      "images": 20,
+      "labeled": 20,
+      "class_space": 120,
+      "class_instances": 100
+    },
+    "rotation": {
+      "images": 18,
+      "labeled": 18,
+      "class_space": 360,
+      "class_instances": 18
+    },
+    "slider": {
+      "images": 2,
+      "labeled": 2,
+      "class_space": null,
+      "class_instances": null
+    },
+    "hcaptcha": {
+      "images": 4,
+      "labeled": 0,
+      "class_space": null,
+      "class_instances": null
+    }
+  },
+  "classification_targets_total": 118,
+  "norm_size": {
+    "grid": [
+      128,
+      128
+    ],
+    "rotation": [
+      152,
+      152
+    ],
+    "slider": [
+      416,
+      null
+    ],
+    "hcaptcha": [
+      128,
+      128
+    ]
+  }
+}
