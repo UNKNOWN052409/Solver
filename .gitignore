@@ -26,3 +26,4 @@ data/tiles/
 engine/target/
 engine/gui/target/
 engine/tui/target/
+tmp/

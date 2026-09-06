@@ -1,7 +1,7 @@
 """Client for the Solver REST API (solver.server). Use from anywhere.
 
     from solver.client import SolverClient
-    sc = SolverClient("http://your-host:8000", api_key="optional")
+    sc = SolverClient("https://your-host:8000", api_key="optional")
     sc.solve_image_file("captcha.png")            # -> "aB9x"
     sc.solve_image_bytes(open("c.png","rb").read())
     sc.solve_image64(b64)

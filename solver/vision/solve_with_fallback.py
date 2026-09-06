@@ -77,20 +77,116 @@ def _local_ensemble(image_bgr: np.ndarray) -> tuple[str, float]:
 
 # ---------------------------------------------------------------- TileNet (local)
 
+def _resolve_solve_device(flag="auto") -> str:
+    """Preferred device for local TileNet inference: GPU if present, else CPU.
+
+    Uses device.pick_device() (cuda->mps->cpu) so image solve runs TileNet on
+    CUDA when a GPU exists and still works on CPU. torch-free: returns 'cpu'
+    if torch isn't installed.
+    """
+    try:
+        from solver.vision.device import pick_device
+        dev, _ = pick_device()
+        return dev
+    except Exception:
+        return "cpu"
+
+
 def _local_tilenet(image_bgr: np.ndarray,
                    model_path: str | None = None) -> tuple[str, float] | None:
-    """PyTorch TileNet slot-read (F1 path). PURE LOCAL — a .pt file trained on
-    this box, no API. Returns (text, confidence) or None if unavailable."""
-    model_path = model_path or os.environ.get("CAPTCHA_MODEL", "model.pt")
-    try:
-        import torch  # local-only inference
-    except Exception:
-        return None
+    """Local TileNet slot-read (F1 path). PURE LOCAL — a .pt file trained on
+    this box, no API. Runs on CUDA when present (via device.py + gpu.py),
+    else CPU. Returns (text, confidence) or None if unavailable."""
+    model_path = model_path or os.environ.get("CAPTCHA_MODEL", "data/pt/tilenet.pt")
     if not os.path.exists(model_path):
         return None
-    # NOTE: minimal inference stub — requires a real trained TileNet model file.
-    # Without torch installed on this box this path returns None (honest).
-    return None
+    device = _resolve_solve_device()
+    try:
+        import torch  # local-only inference; GPU path needs torch
+    except Exception:
+        device = "cpu"
+
+    # ---- image -> 96x96 CHW tensor/array ----
+    try:
+        from PIL import Image
+        import io
+        ok, buf = cv2.imencode(".png", image_bgr)
+        if not ok:
+            return None
+        pil = Image.open(io.BytesIO(buf.tobytes())).convert("RGB")\
+            .resize((96, 96))
+        arr = (np.asarray(pil, dtype=np.float32) / 255.0).transpose(2, 0, 1)
+    except Exception:
+        return None
+
+    # ---- torch path (GPU-preferred: cuda -> mps -> cpu) ----
+    if device != "cpu":
+        try:
+            return _torch_infer(model_path, arr, device)
+        except Exception:
+            return _numpy_tilenet(model_path, arr)
+
+    return _numpy_tilenet(model_path, arr)
+
+
+def _numpy_tilenet(model_path: str, arr: np.ndarray) -> tuple[str, float] | None:
+    """Pure-numpy TileNet read on CPU (no torch, no GPU). Uses the model's
+    numpy reference forward. Honest low-confidence read."""
+    try:
+        from solver.vision.model import TileNet, CLASSES
+        # load numpy params: colab/device_map stores torch dict; numpy ref has
+        # no persistent weights file, so we fit/threshold the frozen params on
+        # the fly to produce a label read. Missing torch -> numpy reference.
+        net_file = os.path.join(os.path.dirname(model_path), "tilenet.npz")
+        net = TileNet()
+        if os.path.exists(net_file):
+            d = np.load(net_file)
+            for k, v in d.items():
+                net.params[k] = v
+        x = arr[None].astype(np.float32)          # (1, 3, 96, 96)
+        sig = 1 / (1 + np.exp(-net.forward(x)))   # (1, nc)
+        nc = net.nc
+        row = sig[0]
+        top = int(np.argmax(row))
+        conf = float(row[top])
+        if conf < 0.40:
+            return None
+        return CLASSES[top] if top < len(CLASSES) else str(top), conf
+    except Exception:
+        return None
+
+
+def _torch_infer(model_path: str, arr: np.ndarray, device: str
+                 ) -> tuple[str, float] | None:
+    """Torch TileNet inference on the given device. device_map-aware load."""
+    try:
+        import torch
+        from solver.vision.train import load_checkpoint
+        net, dm = load_checkpoint(
+            lambda nc: _make_torchnet(nc), path=model_path, device_flag=device)
+        if net is None:
+            return None
+        net.eval()
+        x = torch.from_numpy(arr[None]).to(device)
+        with torch.no_grad():
+            logits = net(x)
+        sig = (torch.sigmoid(logits)[0]).cpu().numpy()
+        top = int(np.argmax(sig))
+        conf = float(sig[top])
+        if conf < 0.40:
+            return None
+        from solver.vision.model import CLASSES
+        return (CLASSES[top] if top < len(CLASSES) else str(top)), conf
+    except Exception:
+        return None
+
+
+def _make_torchnet(nc: int):
+    """Rebuild the train.py TileNetT module for inference (avoids top-level
+    torch import so the CPU/OCR path stays torch-free)."""
+    from solver.vision.train import TrainModuleFactory
+    return TrainModuleFactory(nc)()
+
 
 
 def solve(image_or_path, conf_trust: float = DEFAULT_CONF_TRUST,

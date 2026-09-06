@@ -23,6 +23,54 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from model import TileNet, CLASSES, NUM_CLASSES
 
 
+# ------------------------------------------------ device helpers
+
+def _pick_device(flag: str):
+    """pick_device() + optional --device override. Returns (device, desc)."""
+    from solver.vision.device import pick_device
+    dev, desc = pick_device()
+    if flag and flag in ("cpu", "cuda", "mps"):
+        if flag == "cuda":
+            # explicit cuda request: verify real CUDA exists, else degrade to CPU
+            try:
+                import torch
+                ok = torch.cuda.is_available()
+                if ok:
+                    dev = "cuda"
+                    desc = f"CUDA:{torch.cuda.get_device_name(0)}"
+                else:
+                    dev, desc = "cpu", "CPU (cuda requested but unavailable)"
+            except ImportError:
+                dev, desc = "cpu", "CPU (cuda requested, torch missing)"
+            return dev, desc
+        dev = flag
+        if flag == "mps":
+            desc = "Apple-MPS (forced via --device)"
+        elif flag == "cpu":
+            desc = "CPU (forced via --device)"
+    return dev, desc
+
+
+def _device_report(flag: str, extra: str = "") -> str:
+    """One-line device report (matches device.py's format, honors --device)."""
+    from solver.vision.device import batch_size_for, amp_enabled
+    dev, desc = _pick_device(flag)
+    amp = "ON" if amp_enabled(dev) else "off"
+    bs = batch_size_for(dev)
+    return (f"device_report: device={dev} ({desc}) | batch={bs} | "
+            f"AMP={amp} | torch={'imported' if _torch_ok() else 'missing'}"
+            + (f" | {extra}" if extra else ""))
+
+
+def _torch_ok() -> bool:
+    try:
+        import torch  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+
 # ------------------------------------------------ synthetic tiles
 
 def synth_tile(rng, cls_idx):
@@ -64,11 +112,12 @@ def make_batch(rng, n, n_classes):
 
 # ------------------------------------------------ numpy SGD (ref)
 
-def train_synthetic(net, epochs=3, steps_per_epoch=30, lr=0.05):
+def train_synthetic(net, epochs=3, steps_per_epoch=30, lr=0.05, device_flag="auto"):
     rng = np.random.default_rng(7)
     # ref-impl me full backprop numpy conv pe mehenga hai — pipeline
     # proof: fc layer ko synthetic targets pe fit karo (feature extractor
     # frozen). Real training torch/ONNX path me hota hai (train_torch).
+    print(_device_report(device_flag, extra="numpy path (synthetic)"))
     print(f"[synthetic] fc-head fitting: {epochs}x{steps_per_epoch} steps")
     for ep in range(epochs):
         loss_acc = 0.0
@@ -103,7 +152,41 @@ def train_synthetic(net, epochs=3, steps_per_epoch=30, lr=0.05):
     print(f"  recall@0.5: {acc:.3f} (synthetic signature task)")
 
 
-def train_torch(data_dir, epochs=20):
+# ------------------------------------------------ Torch TileNet (train path)
+
+def TileNetT(nc):
+    """Factory building the trainable conv TileNet module (torch).
+
+    Defined at module level (lazily importing torch) so both train.py and
+    solve_with_fallback.py can build it for training *or* inference without a
+    hard top-level torch dependency.
+    """
+    import torch
+    import torch.nn as nn
+
+    class _TileNetT(nn.Module):
+        def __init__(self, nclass):
+            super().__init__()
+            def block(cin, cout):
+                return nn.Sequential(
+                    nn.Conv2d(cin, cout, 3), nn.ReLU(), nn.MaxPool2d(2))
+            self.f = nn.Sequential(
+                block(3, 16), block(16, 32), block(32, 64),
+                block(64, 128), block(128, 128),
+                nn.AdaptiveAvgPool2d(1))
+            self.fc = nn.Linear(128, nclass)
+        def forward(self, x):
+            return self.fc(self.f(x).flatten(1))
+
+    return _TileNetT(nc)
+
+
+def TrainModuleFactory(nc):
+    """Alias for building a TileNetT for inference (same thing)."""
+    return TileNetT(nc)
+
+
+def train_torch(data_dir, epochs=20, device_flag="auto"):
     """Torch path — harvested grids + weak-labels se full training.
     Requires: torch, torchvision (CPU theek hai). Tiles 96x96,
     multi-label BCE, augmentation fliplr/rot90."""
@@ -117,20 +200,6 @@ def train_torch(data_dir, epochs=20):
     print("[torch] TileNet-T (trainable conv) init...")
     import torchvision.transforms as T
     from PIL import Image
-
-    class TileNetT(nn.Module):
-        def __init__(self, nc):
-            super().__init__()
-            def block(cin, cout):
-                return nn.Sequential(
-                    nn.Conv2d(cin, cout, 3), nn.ReLU(), nn.MaxPool2d(2))
-            self.f = nn.Sequential(
-                block(3, 16), block(16, 32), block(32, 64),
-                block(64, 128), block(128, 128),
-                nn.AdaptiveAvgPool2d(1))
-            self.fc = nn.Linear(128, nc)
-        def forward(self, x):
-            return self.fc(self.f(x).flatten(1))
 
     # dataset: grids -> tiles + prompt weak-label (meta.json)
     # PU-learning (positive-unlabeled): grid prompt class ke tiles me se
@@ -160,12 +229,22 @@ def train_torch(data_dir, epochs=20):
         sys.exit(1)
     nc = NUM_CLASSES
     net = TileNetT(nc)
-    # ---- adaptive device (GPU->CUDA/MPS, warna CPU) ----
-    from solver.vision.device import pick_device, batch_size_for, amp_enabled
-    device, dev_desc = pick_device()
+    # ---- adaptive device (GPU->CUDA/MPS, warna CPU) + --device override ----
+    from solver.vision.device import batch_size_for, amp_enabled
+    device, dev_desc = _pick_device(device_flag)
     net = net.to(device)
     use_amp = amp_enabled(device)
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    # torch.compile when available (CUDA/MPS/CPU >= 2.0)
+    compiled = ""
+    if hasattr(torch, "compile"):
+        try:
+            net = torch.compile(net)
+            compiled = " | torch.compile=on"
+        except Exception as e:
+            compiled = f" | torch.compile=off({e})"
+    print(_device_report(device_flag,
+                         extra=f"torch path{compiled}"))
     print(f"[device] {dev_desc} | batch={batch_size_for(device)} | AMP={'ON' if use_amp else 'off'}")
     print(f"[torch] {sum(p.numel() for p in net.parameters()):,} params | "
           f"{len(pairs)} tiles")
@@ -193,7 +272,21 @@ def train_torch(data_dir, epochs=20):
             loss_acc += float(loss) * len(chunk); tot += len(chunk)
         print(f"  epoch {ep+1}: loss={loss_acc/max(1,tot):.4f} ({tot} tiles, bs={bs})")
     os.makedirs("data/pt", exist_ok=True)
-    torch.save(net.state_dict(), "data/pt/tilenet.pt")
+    # ---- save with device_map: store weights + trained-on device, and a
+    # load-time map_location so the file loads on WHATEVER device is present.
+    from solver.vision.gpu import detect_cuda_vram
+    cvd = detect_cuda_vram()
+    device_map = {
+        "device": device,
+        "desc": dev_desc,
+        "torch": _torch_ok(),
+        "can_run_gpu": cvd["available"],
+        "gpus": cvd["devices"],
+    }
+    torch.save({"model": net.state_dict(), "device_map": device_map,
+                "nnc": nc, "classes": CLASSES},
+               "data/pt/tilenet.pt")
+    print(f"[+] saved data/pt/tilenet.pt (device_map={device_map['device']})")
     # ONNX export
     try:
         dummy = torch.zeros(1, 3, 96, 96)
@@ -207,17 +300,44 @@ def train_torch(data_dir, epochs=20):
     print("[done] weights: data/pt/tilenet.pt")
 
 
+def load_checkpoint(model_cls, path="data/pt/tilenet.pt", device_flag="auto"):
+    """Load a device_map-saved checkpoint onto whatever device is present.
+
+    Returns (net, device_map) or (None, None) if unavailable. Honors
+    --device override; falls back to the checkpoint's trained-on device then
+    to local best (cuda->mps->cpu).
+    """
+    try:
+        import torch
+    except Exception:
+        return None, None
+    if not os.path.exists(path):
+        return None, None
+    dev, _ = _pick_device(device_flag)
+    ckpt = torch.load(path, map_location=torch.device(dev or "cpu"))
+    net = model_cls(ckpt.get("nnc", NUM_CLASSES))
+    net.load_state_dict(ckpt["model"])
+    net.to(dev)
+    return net, ckpt.get("device_map", {})
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--synthetic", action="store_true")
     ap.add_argument("--data", default="")
     ap.add_argument("--epochs", type=int, default=20)
+    ap.add_argument("--device", default="auto",
+                    choices=["auto", "cpu", "cuda", "mps"],
+                    help="override device selection (default auto)")
     args = ap.parse_args()
     if args.synthetic:
-        train_synthetic(TileNet(), epochs=min(3, args.epochs))
+        train_synthetic(TileNet(), epochs=min(3, args.epochs),
+                        device_flag=args.device)
     elif args.data:
-        train_torch(args.data, epochs=args.epochs)
+        train_torch(args.data, epochs=args.epochs, device_flag=args.device)
     else:
+        # bare run: just print device_report (verify path works w/o data)
+        print(_device_report(args.device))
         ap.print_help()
 
 

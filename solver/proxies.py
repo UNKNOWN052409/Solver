@@ -262,7 +262,7 @@ def egress_info():
     Returns {ip, isp, country, mobile, proxy, hosting, residential}."""
     try:
         req = urllib.request.Request(
-            "http://ip-api.com/json/?fields=status,country,city,isp,org,as,"
+            "https://ip-api.com/json/?fields=status,country,city,isp,org,as,"
             "mobile,proxy,hosting,query",
             headers={"User-Agent": "curl/8.0"})
         with urllib.request.urlopen(req, timeout=12) as r:

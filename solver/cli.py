@@ -7,8 +7,8 @@ LOCAL
     solver train-real ./realdata --out slot_model.pt        # real labeled data
     solver serve [--port 8000] [--api-key K]                # host the solve API
     solver probe https://any-site.com/login                  # fingerprint captcha tech
-    solver health http://host:8000 [-k KEY]                  # check a hosted API
-    solver call http://host:8000 image.png [-k KEY] [--engine slot]
+    solver health https://host:8000 [-k KEY]                  # check a hosted API
+    solver call https://host:8000 image.png [-k KEY] [--engine slot]
 
 EXTERNAL SERVICE (2captcha-protocol)
     solver api-image image.png --key YOURKEY
