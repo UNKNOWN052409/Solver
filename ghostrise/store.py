@@ -22,19 +22,58 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 
 RCLONE = shutil.which("rclone") or "/usr/local/bin/rclone"
 DEFAULT_REMOTE = "gdrive"
 
 
-def _run(args: list[str], check: bool = True) -> subprocess.CompletedProcess:
+def _run(args: list[str], check: bool = True, timeout: int = 120) -> subprocess.CompletedProcess:
     """Run rclone, never directly expose a shell-injectable string."""
     return subprocess.run(
         [RCLONE, *args],
         capture_output=True,
         text=True,
         check=False,
+        timeout=timeout,
     )
+
+
+def _run_retry(args: list[str], retries: int = 4, base_delay: float = 3.0,
+               check: bool = True, timeout: int = 120) -> subprocess.CompletedProcess:
+    """Run rclone with exponential backoff. Google's shared Drive client_id
+    rate-limits write bursts with transient `rateLimitExceeded` (exit != 0).
+    Real fix: retry with backoff so a burst spike never hangs the pipeline.
+    Only retries on failures that LOOK transient (non-zero exit / timeout);
+    a hard success short-circuits immediately."""
+    delay = base_delay
+    last = None
+    for attempt in range(1, retries + 1):
+        try:
+            r = _run(args, check=check, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            last = "timeout"
+            if attempt < retries:
+                time.sleep(delay)
+                delay *= 2
+                continue
+            raise RuntimeError(f"rclone {args[0]} timed out after {retries} attempts")
+        if r.returncode == 0:
+            return r
+        # transient (rate-limit / 5xx / connection) -> backoff and retry
+        err = (r.stderr or "").lower()
+        transient = any(k in err for k in ("ratelimitexceeded", "quota",
+                                            "429", "5", "temporar", "timeout",
+                                            "retry", "connection", "broken pipe"))
+        if attempt < retries and (transient or r.returncode in (5,)):
+            last = err.strip()[:120]
+            time.sleep(delay)
+            delay *= 2
+            continue
+        if not check:
+            return r
+        raise RuntimeError(f"rclone {args[0]} failed: {err.strip()}")
+    raise RuntimeError(f"rclone {args[0]} failed after {retries} attempts: {last}")
 
 
 def _remote_path(remote: str, path: str) -> str:
@@ -44,8 +83,8 @@ def _remote_path(remote: str, path: str) -> str:
 
 def drive_list(remote: str = DEFAULT_REMOTE, path: str = "") -> list[str]:
     """List files under gdrive:path (single :remote listing)."""
-    r = _run(["--no-banner", "lsf", "--files-only",
-              _remote_path(remote, path)])
+    r = _run_retry(["--no-banner", "lsf", "--files-only",
+                    _remote_path(remote, path)])
     if r.returncode != 0:
         raise RuntimeError(f"rclone lsf failed: {r.stderr.strip()}")
     return [ln for ln in r.stdout.splitlines() if ln.strip()]
@@ -57,40 +96,52 @@ def drive_exists(remote_path: str, remote: str = DEFAULT_REMOTE,
     if not pattern:
         pattern = os.path.basename(remote_path.rstrip("/"))
     parent = os.path.dirname(remote_path.rstrip("/"))
-    r = _run(["lsf", "--files-only", _remote_path(remote, parent)])
+    r = _run_retry(["lsf", "--files-only", _remote_path(remote, parent)],
+                   check=False)
     if r.returncode != 0:
         return False
     return any(ln.strip() == pattern for ln in r.stdout.splitlines())
 
 
 def drive_upload(local_path: str, remote_path: str,
-                 remote: str = DEFAULT_REMOTE) -> bool:
-    """Upload local_path -> gdrive:remote_path (direct copy, no mount)."""
+                 remote: str = DEFAULT_REMOTE, verify_retries: int = 3) -> bool:
+    """Upload local_path -> gdrive:remote_path at the EXACT path.
+    Uses `rclone copyto` (not `copy`), which places the file at the target
+    filename instead of treating the destination as a directory. CONTRACT:
+    the file must actually land — copyto, then VERIFY via listing; if the
+    shared client throttles the write or listing propagates late, re-copy
+    with a short delay. Only returns True once confirmed present."""
     if not os.path.exists(local_path):
         raise FileNotFoundError(local_path)
-    dest_dir = os.path.dirname(remote_path.rstrip("/"))
-    r = _run(["copy", local_path, _remote_path(remote, dest_dir)], check=False)
-    if r.returncode != 0:
-        raise RuntimeError(f"rclone copy up failed: {r.stderr.strip()}")
-    return drive_exists(remote_path, remote)
+    remote_full = _remote_path(remote, remote_path)   # gdrive:<remote_path>
+
+    for attempt in range(1, verify_retries + 1):
+        r = _run_retry(["copyto", local_path, remote_full], check=False)
+        if r.returncode != 0 and attempt == verify_retries:
+            raise RuntimeError(f"rclone copyto up failed: {r.stderr.strip()}")
+        # listing may lag behind the write — give it a moment then confirm
+        for _ in range(3):
+            if drive_exists(remote_path, remote):
+                return True
+            time.sleep(2)
+        # not confirmed yet: if this was the last attempt, surface the truth
+        if attempt == verify_retries:
+            return False
+        # otherwise back off and re-copyto (throttled write may not have landed)
+        time.sleep(2)
+    return False
 
 
 def drive_download(remote_path: str, local_path: str,
                    remote: str = DEFAULT_REMOTE) -> bool:
-    """Download gdrive:remote_path -> local_path (direct copy, no mount)."""
+    """Download gdrive:remote_path -> local_path at the EXACT local path.
+    Uses `rclone copyto`, which fetches the specific remote file to the
+    target filename (no temp-dir basename guessing needed)."""
     os.makedirs(os.path.dirname(os.path.abspath(local_path)) or ".", exist_ok=True)
-    src_dir = os.path.dirname(remote_path.rstrip("/")) or ""
-    base = os.path.basename(remote_path.rstrip("/"))
-    # rclone `copy <remote>:<dir> <local_dir>` writes the file under its
-    # ORIGINAL basename — so stage into a temp dir and rename to local_path
-    with tempfile.TemporaryDirectory() as tmp:
-        r = _run(["copy", _remote_path(remote, src_dir), tmp], check=False)
-        if r.returncode != 0:
-            raise RuntimeError(f"rclone copy down failed: {r.stderr.strip()}")
-        staged = os.path.join(tmp, base)
-        if not os.path.exists(staged):
-            return False
-        shutil.move(staged, local_path)
+    r = _run_retry(["copyto", _remote_path(remote, remote_path), local_path],
+                   check=False)
+    if r.returncode != 0:
+        raise RuntimeError(f"rclone copyto down failed: {r.stderr.strip()}")
     return os.path.exists(local_path)
 
 
