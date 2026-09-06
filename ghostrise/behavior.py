@@ -64,8 +64,13 @@ class HumanActions:
     # ---- low level -------------------------------------------------
 
     def move_to(self, target, overshoot=False):
-        # locator/handle OBJECT (wire _WireLocator) ya playwright-string
-        if hasattr(target, "bounding_box"):
+        # str target -> playwright-style selector; otherwise a locator/handle
+        # OBJECT (wire _WireLocator). NOTE: must test isinstance(str) BEFORE
+        # hasattr('count') because a plain string has str.count() — the old code
+        # misdetected strings as wire locators and returned no box.
+        if isinstance(target, str):
+            box = self.page.locator(target).bounding_box()
+        elif hasattr(target, "bounding_box"):
             box = target.bounding_box()
         elif hasattr(target, "count"):  # wire locator — JS-rect fallback
             rects = getattr(target, "rects", None)

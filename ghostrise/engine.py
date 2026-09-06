@@ -114,9 +114,14 @@ class GhostSession:
                 try:
                     from ghostrise.wire import GhostWire
                     kwargs = {"headless": not self.headed}
+                    wire_args = list(
+                        (self.extra_launch_kwargs.pop("browser_args", None)
+                         or []))
                     if self.proxy_url:
-                        kwargs["extra_args"] = [
-                            f"--proxy-server={self.proxy_url.split('://')[-1]}"]
+                        wire_args.append(
+                            f"--proxy-server={self.proxy_url.split('://')[-1]}")
+                    if wire_args:
+                        kwargs["extra_args"] = wire_args
                     self.wire = GhostWire(**kwargs)
                     self.wire.launch()
                     self.browser = _WireCompat(self.wire)
@@ -341,9 +346,15 @@ class _WireCompat:
 
 
 def open_url(url: str, profile: str = "default", proxy: str | None = None,
-             headed: bool = False, screenshot: str | None = None):
-    """One-shot helper: open, settle through challenges, report JSON."""
-    with GhostSession(profile=profile, proxy=proxy, headed=headed) as ghost:
+             headed: bool = False, screenshot: str | None = None,
+             browser_args: list | None = None):
+    """One-shot helper: open, settle through challenges, report JSON.
+
+    browser_args: optional chromium flags (from runtime.resolve()) applied
+    to the raw-CDP GhostWire engine.
+    """
+    with GhostSession(profile=profile, proxy=proxy, headed=headed,
+                      browser_args=browser_args) as ghost:
         page = ghost.page(url)
         deadline = time.time() + 45
         while time.time() < deadline:

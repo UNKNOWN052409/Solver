@@ -11,6 +11,8 @@ import json
 
 from ghostrise.engine import open_url
 from ghostrise.profiles import create_profile, delete_profile, list_profiles
+from ghostrise.runtime import resolve
+from ghostrise import store
 
 
 def cmd_create(a):
@@ -36,12 +38,38 @@ def cmd_delete(a):
 
 
 def cmd_open(a):
+    # Resolve the run-mode from flags (GPU / low-RAM / auto-detect).
+    prof = resolve(gpu=a.gpu or None, low_ram=a.low_ram or None)
+    print(f"[+] run-mode: gpu={prof['gpu']} igpu={prof['igpu']} "
+          f"low_ram={prof['low_ram']} tier={prof['tier']}")
     result = open_url(
         a.url, profile=a.profile, proxy=a.proxy,
         headed=a.headed, screenshot=a.shot,
+        browser_args=prof["browser_args"],
     )
+    # Optional Drive sync: push a copy of the run config+cookies+cache up.
+    stored = None
+    if a.store:
+        try:
+            sid = store.store_session_dir(
+                result.get("session_dir", a.profile),
+                remote_path=a.store,
+            )
+            stored = sid
+            print(f"[+] stored session -> gdrive:{a.store}/{sid.split('/')[-1]}")
+        except Exception as e:  # noqa: BLE001 — never break browsing
+            print(f"[!] store sync skipped: {e}")
     if a.json:
-        print(json.dumps(result))
+        out = dict(result)
+        if stored:
+            out["stored"] = stored
+        print(json.dumps(out))
+
+
+def cmd_profile(a):
+    """Print the resolved GPU/low-RAM/tier profile (run-mode)."""
+    prof = resolve(gpu=a.gpu or None, low_ram=a.low_ram or None)
+    print(json.dumps(prof, sort_keys=True))
 
 
 def main():
@@ -72,7 +100,20 @@ def main():
     o.add_argument("--headed", action="store_true", help="visible window")
     o.add_argument("--shot", help="save screenshot to path")
     o.add_argument("--json", action="store_true", dest="json")
+    # --- run-mode (task D3) ---
+    o.add_argument("--gpu", action="store_true",
+                   help="force GPU run-mode (nvidia-smi / mounted GPU)")
+    o.add_argument("--low-ram", action="store_true",
+                   help="force low-RAM mode (<1GB posture), disable GPU")
+    o.add_argument("--store", metavar="DRIVE_DIR",
+                   help="sync session config+cookies+cache to this gdrive dir "
+                        "after browsing (rclone, no fuse)")
     o.set_defaults(fn=cmd_open)
+
+    pr = sub.add_parser("profile", help="resolve & print the run-mode profile")
+    pr.add_argument("--gpu", action="store_true", help="force GPU")
+    pr.add_argument("--low-ram", action="store_true", help="force low-RAM")
+    pr.set_defaults(fn=cmd_profile)
 
     args = ap.parse_args()
     args.fn(args)
