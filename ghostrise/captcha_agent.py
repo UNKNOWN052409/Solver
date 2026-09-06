@@ -93,6 +93,42 @@ def _click_box(frame, human, box_sel):
         return False
 
 
+def _human_click_at(page, human, x, y):
+    """Own-click (bezier move + human press) at absolute coords — raw
+    Playwright mouse.click ko bypass karta hai (detection footprint)."""
+    try:
+        from .behavior import bezier_path, HumanActions
+    except Exception:
+        bezier_path, HumanActions = None, None
+    try:
+        cur = page.evaluate("({x: window.mouseX || 0, y: window.mouseY || 0})")
+    except Exception:
+        cur = {"x": 0, "y": 0}
+    if bezier_path is not None:
+        path = bezier_path(cur, {"x": x, "y": y})
+        for p in path[:-1]:
+            try:
+                page.mouse.move(p["x"], p["y"])
+                page.wait_for_timeout(random.uniform(4, 16))
+            except Exception:
+                pass
+    page.mouse.move(x + random.uniform(-2, 2), y + random.uniform(-2, 2))
+    try:
+        page.wait_for_timeout(random.uniform(60, 160))  # aim-settle
+    except Exception:
+        time.sleep(random.uniform(0.06, 0.16))
+    page.mouse.down()
+    try:
+        page.wait_for_timeout(random.uniform(55, 130))  # real press hold
+    except Exception:
+        time.sleep(random.uniform(0.055, 0.13))
+    page.mouse.up()
+    try:
+        page.evaluate(f"window.mouseX={x};window.mouseY={y}")
+    except Exception:
+        pass
+
+
 def _is_solved(frame, solved_sel, timeout=8000):
     """Wait for the solved marker."""
     try:
@@ -126,7 +162,7 @@ def solve_recaptcha_v2(page, human, timeout=20000):
     human.page.mouse.move(cx - 20 + random.uniform(-3, 3),
                           cy + random.uniform(-2, 2))
     time.sleep(random.uniform(0.2, 0.6))
-    human.page.mouse.click(cx - 20, cy)
+    _human_click_at(page, human, cx - 20, cy)
     time.sleep(3.5)
     # token minted? (kabhi kabhi click hi kaafi hota hai)
     try:
@@ -374,7 +410,8 @@ def solve_turnstile(page, human, timeout=25000):
                 if box:
                     bb = box.bounding_box()
                     if bb:
-                        human.page.mouse.click(
+                        _human_click_at(
+                            page, human,
                             bb["x"] + bb["width"] / 2,
                             bb["y"] + bb["height"] / 2)
             except Exception:

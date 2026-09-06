@@ -18,6 +18,7 @@ use std::collections::BTreeMap;
 
 pub mod adaptive;
 pub mod drl;
+pub mod click;
 pub mod anti;
 pub mod form;
 pub mod human;
