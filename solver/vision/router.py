@@ -120,11 +120,14 @@ def _detect_grid_tiles(gray: np.ndarray):
                 squares += 1
 
     lattice = (row_per + col_per) / 2.0
+    # A real tile grid is periodic on BOTH axes (2D lattice); rotated text
+    # rings are periodic on ONE axis only. Require the WEAKER axis to still be
+    # periodic, so single-axis rot-text doesn't false-fire as grid_tiles.
+    both_axes = min(row_per, col_per)
     tile_ratio = min(1.0, squares / 12.0)       # many closed cells
-    conf = 0.45 * lattice + 0.55 * tile_ratio
-
-    matched = conf >= 0.42 and (squares >= 6 or lattice >= 0.55)
-    sub = f"lattice={lattice:.2f} squares={squares}"
+    conf = 0.45 * both_axes + 0.55 * tile_ratio
+    matched = conf >= 0.42 and (squares >= 8 or both_axes >= 0.55)
+    sub = f"lattice={both_axes:.2f} squares={squares}"
     return matched, float(min(1.0, conf)), sub
 
 
@@ -175,7 +178,12 @@ def _detect_arkose_rotate(gray: np.ndarray):
     # genuinely round silhouette (square ~0.79, noise ~0.74 both excluded).
     crowding = max(1.0, float(large_circ))
     conf = max(best * 0.95, hough) / (crowding ** 0.4)
-    matched = conf >= 0.68 and best >= 0.78
+    # STRICT guard (real-data): a genuine arkose 'rotate' disc needs EITHER a
+    # Hough-confirmed circle OR a near-perfect circularity (~0.85+, a real
+    # filled disc). Chaotic text backgrounds top out ~0.78-0.80 circularity
+    # with NO Hough circle — those must not fire as arkose_rotate.
+    disc_strong = (hough > 0.0) or (best >= 0.85)
+    matched = conf >= 0.68 and disc_strong
     sub = f"circ={best:.2f} hough={hough:.2f} discs={large_circ}"
     return matched, float(min(1.0, conf)), sub
 
@@ -229,23 +237,47 @@ def _detect_slider_gap(gray: np.ndarray):
 
 def _detect_text(gray: np.ndarray):
     """Text captcha: a small set (2-8) of separate glyph blobs on a fairly flat
-    background."""
+    background. Real-world text captchas are often LOW-CONTRAST / washed-out
+    (e.g. map/chaotic backgrounds), so contrast-stretch (CLAHE) before Otsu
+    so glyph structure actually survives the threshold."""
     h, w = gray.shape[:2]
     if h < 20 or w < 20:
         return False, 0.0, ""
-    _, binimg = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    binimg = cv2.morphologyEx(binimg, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
-    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binimg, 8)
-    glyphs = 0
-    total_px = 0
-    for i in range(1, n_labels):
-        x, y, cw, ch, a = stats[i]
-        if cw < 2 or ch < 2:
-            continue
-        glyphs += 1
-        total_px += a
-    # text-like: a handful of compact glyphs covering a modest fraction of area
-    frac = total_px / max(1, h * w)
+
+    def glyphs_on(g):
+        g = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8)).apply(g)
+        g = cv2.normalize(g, None, 0, 255, cv2.NORM_MINMAX)
+        _, b = cv2.threshold(g, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        b = cv2.morphologyEx(b, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8))
+        n, _, st, _ = cv2.connectedComponentsWithStats(b, 8)
+        tot = 0
+        cnt = 0
+        for i in range(1, n):
+            x, y, cw, ch, a = st[i]
+            if cw < 2 or ch < 2:
+                continue
+            cnt += 1
+            tot += a
+        return cnt, tot
+
+    # best signal across plain + CLAHE-enhanced thresholding
+    best_glyphs, best_frac = glyphs_on(gray)
+    if best_glyphs < 2:
+        # also try global histogram (very low-contrast flat caps)
+        b2 = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)[1]
+        n2, _, st2, _ = cv2.connectedComponentsWithStats(
+            cv2.morphologyEx(b2, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8)), 8)
+        c2 = t2 = 0
+        for i in range(1, n2):
+            cw, ch = st2[i][2], st2[i][3]
+            if cw >= 2 and ch >= 2:
+                c2 += 1
+                t2 += st2[i][4]
+        if c2 > best_glyphs:
+            best_glyphs, best_frac = c2, t2
+
+    glyphs = best_glyphs
+    frac = best_frac / max(1, h * w)
     ideal = 3 <= glyphs <= 9 and 0.01 < frac < 0.35
     conf = min(1.0, max(0.0, (glyphs - 1) * 0.12 + (0.3 if ideal else 0.0)))
     matched = 0.5 <= glyphs <= 10 and ideal
@@ -289,12 +321,33 @@ def _detect_math(gray):
     except Exception:
         crossings = 0
 
-    # short arithmetic expression: operators (thin strokes / cross) + digits
+    # short arithmetic expression: operators (thin strokes / cross) + digits.
+    # STRICT guard (real-data): require a clear operator cross AND >=2 compact
+    # digit blobs AND the compact blobs form a horizontal run (a real equation
+    # sits on one line). Chaotic text-captcha backgrounds produce random
+    # crosses + scattered blobs that otherwise false-positive as 'math'.
     operator_signal = thin_strokes + crossings
+    # horizontal-run test: compact blobs share a narrow vertical band
+    comp_x, comp_y = [], []
+    for i in range(1, n_labels):
+        x, y, cw, ch, a = stats[i]
+        if cw < 3 or ch < 3:
+            continue
+        ar = max(cw, ch) / max(1.0, min(cw, ch))
+        if not (ar > 2.2) and 0.25 < a / max(1, cw * ch) < 1.0 \
+                and max(cw, ch) <= max(h, w) * 0.35:
+            comp_x.append(x + cw / 2)
+            comp_y.append(y + ch / 2)
+    horizontal = False
+    if len(comp_x) >= 2:
+        cy0 = min(comp_y)
+        cy1 = max(comp_y)
+        horizontal = (cy1 - cy0) <= max(h, w) * 0.35
+
     conf = min(1.0, 0.45 + 0.18 * min(3, operator_signal) +
                (0.12 if compact >= 1 else 0.0))
-    matched = (crossings > 0 and compact >= 1) or (operator_signal >= 2 and compact >= 1)
-    sub = f"ops={operator_signal} compact={compact} cross={crossings}"
+    matched = (crossings > 0 and compact >= 2 and horizontal)
+    sub = f"ops={operator_signal} compact={compact} cross={crossings} ln={horizontal}"
     return matched, float(min(1.0, conf)), sub
 
 
