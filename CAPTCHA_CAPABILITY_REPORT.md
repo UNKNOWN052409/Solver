@@ -54,8 +54,19 @@ solvers): 1) behavioral (humanized mouse+v3) -> 2) audio-challenge STT ->
 3) vision-LLM/grid (TileNet or VLM screenshot) -> 4) token-verify -> 5) human
 fallback w/ screenshot. Our gap is ONLY #2 (audio deps) and #3 (trained model).
 
+## Solve pipeline (added — D1 redo, verified)
+`solver/vision/solve_with_fallback.py`: confidence-guarded 3-stage chain —
+  local ensemble (conf from % variant agreement) -> vision-LLM
+  (VISION_LLM_URL/MODEL, base64 PNG, "transcribe exactly") -> honest
+  `heuristic-lowconf` flag. No false "solved": live local exact=1/10, so
+  heuristic conf is hard-capped 0.65 and defaults to lowconf until a vision
+  backend actually returns. Verified: vision chain returns method='vision'
+  conf=1.0 when a vision endpoint answers (mock endpoint test PASS).
+  CLI: `solve <img> --fallback` prints text+confidence+method.
+
 ## Priority
-1. Torch + TileNet train (fixes F1+F2 — the headline blocker)
-2. ffmpeg + STT audio (F3)
-3. proxy pool feed (F4)
-4. verify on live site, not demo
+1. Point VISION_LLM_URL at a real VLM (qwen2.5vl/llava) -> F1+F2 solved live
+2. Torch + TileNet train (removes the vision network dependency)
+3. ffmpeg + STT audio (F3)
+4. proxy pool feed (F4)
+5. verify on live site, not demo
