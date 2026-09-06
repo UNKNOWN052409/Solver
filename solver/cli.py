@@ -66,11 +66,11 @@ def cmd_solve(a):
     from solver.preprocessor import Preprocessor
 
     if getattr(a, "fallback", False):
-        from solver.vision.solve_with_fallback import solve_with_fallback
+        from solver.vision.solve_with_fallback import solve
         raw = cv2.imread(str(Path(a.image)))
         if raw is None:
             sys.exit(f"[!] Cannot read image: {a.image}")
-        r = solve_with_fallback(raw)
+        r = solve(raw)
         print(f"text={r['text']!r} confidence={round(r.get('confidence',0),3)} "
               f"method={r.get('method')} "
               f"(local={r.get('local_candidate')!r})")
@@ -324,8 +324,8 @@ def main():
     s.add_argument("--remove-lines", action="store_true")
     s.add_argument("--debug", action="store_true")
     s.add_argument("--fallback", action="store_true",
-                   help="run conf-guarded solve_with_fallback (local + "
-                        "VISION_LLM_URL fallback); prints method+confidence")
+                   help="AI-INDEPENDENT local solve (OCR ensemble + optional "
+                        "local TileNet); outputs method+confidence, no API")
     s.set_defaults(fn=cmd_solve)
 
     t = sub.add_parser("train", help="train a CNN on synthetic data")
