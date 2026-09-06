@@ -20,13 +20,22 @@ import cv2
 
 from .base import BaseEngine
 
-TESS_ROOT = Path(os.environ.get("SOLVER_TESS_ROOT", "/tmp/tessroot"))
+# Userland tesseract tree (no-root Kali/proot). Candidate roots probed in
+# order; first one that has the binary wins. SOLVER_TESS_ROOT overrides all.
+_CANDIDATE_TESS_ROOTS = [
+    "/tmp/tesseract-root",  # primary no-root userland tree (this box)
+    "/tmp/tessroot",        # legacy default
+]
+TESS_ROOT = Path(
+    os.environ.get("SOLVER_TESS_ROOT")
+    or next((r for r in _CANDIDATE_TESS_ROOTS if (Path(r) / "usr" / "bin" / "tesseract").exists()), "/tmp/tessroot")
+)
 
 
 class TesseractEngine(BaseEngine):
     name = "tesseract"
 
-    def __init__(self, charset: str = "0123456789abcdefghijklmnopqrstuvwxyz", psm: int = 7, oem: int = 1):
+    def __init__(self, charset: str = "0123456789abcdefghijklmnopqrstuvwxyz", psm: int = 13, oem: int = 3):
         """psm 7 = treat image as a single text line; 13 = raw line
         (often best for captchas).
 

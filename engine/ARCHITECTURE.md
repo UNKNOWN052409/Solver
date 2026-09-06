@@ -216,3 +216,49 @@ CPU-with-min-RAM):
 
 Everything is local-first; nothing connects to a server unless explicitly
 told to. That is the contract.
+
+---
+
+## 13. System architecture (LO, 2026-09-06) — Drive primary, dynamic agents
+
+LO's standing architecture mandates (implemented in `ghostrise/orchestrator.py` +
+`ghostrise/store.py` + `ghostrise/runtime.py`):
+
+**Storage principle — "Store remotely, execute locally, scale dynamically":**
+- Google Drive = primary/persistent storage. Local system = runtime/execution
+  cache only.
+- Every resource the system downloads — tools, packages, deps, browser files,
+  models, datasets, binaries, caches, config — defaults to storing on Drive.
+- Runtime fetches what it needs from Drive into a local cache, executes, then
+  cleans the local temp files. Local disk stays lean; resources stay persistent.
+- Browser heavy/persistent data (binaries, profiles, extensions, downloads,
+  user data, config, tools) persists on Drive; the running browser executes
+  locally. Browser default download destination = Drive-backed storage.
+
+**Dynamic sub-agent architecture — "One Task = One Dedicated Sub-Agent":**
+- User tasks are decomposed into a queue. The system spawns only as many
+  workers as resources allow (CPU, RAM, GPU/VRAM, bandwidth, browser instances,
+  task complexity), runs them in parallel, collects results, releases idle
+  agents. No permanent over-spawn.
+- Monitoring agents spawn dynamically alongside task agents (~half the count):
+  health checks, progress, error detection, stuck-agent detection, resource
+  usage, retry/replace of failed tasks, completion verify, results to the
+  master.
+- Master Orchestrator owns: task decomposition, task queue, sub-agent spawn,
+  agent + monitor allocation, resource allocation, CPU/GPU selection, browser
+  context allocation, Drive storage management, retry handling, result
+  aggregation, agent termination, cleanup.
+- Resource-aware scaling: `runtime.mem_total_kb/tier/detect_nv_gpu` +
+  `gpu.py` decide parallel agent count, monitor count, which tasks run in
+  parallel vs wait, which use GPU vs CPU. Max parallelism with min resource.
+- Persistent state (agent/task/browser/config/artifacts) lives on Drive via
+  `store.drive_upload/store_session_dir`; local is ephemeral compute.
+
+**Testing mandate — REAL DATA, NO MOCKUPS:**
+- Every module is tested on real data (real captcha images, real Drive ops,
+  real `hermes chat --oneshot` worker processes). Synthetic/mock paths are
+  clearly flagged in code as test-only scaffolding; they are never presented
+  as real capability.
+- "Har ek cheez test karo aur ye mock hai ki kya hai — har ek cheez test karna
+  phir kaam karna." Mocks vs real are explicitly labelled per module.
+
