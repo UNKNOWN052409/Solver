@@ -1,0 +1,16 @@
+[package]
+name = "comet"
+version = "0.1.0"
+edition = "2021"
+description = "Comet — lightweight Rust browser core: inbuilt compiler, MCP-ready server, solver API consumer, same-IP + residential proxy. Scaffold crate (std-only) for the browser/ half of the one-repo/two-folder model."
+
+# Low-resource profile (mirrors the design doc §5): size-optimized, stripped,
+# abort-on-panic. Keeps the binary small and idle CPU near zero.
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+
+[profile.dev]
+# Dev builds stay quick; no extra deps to pull.

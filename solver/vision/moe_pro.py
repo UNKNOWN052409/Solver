@@ -15,9 +15,17 @@ Phone-runnable like the original: pure PyTorch, int8 dynamic quantize, ONNX expo
 single-image forward. `--arch` selects the family: {v3moe, basic, dspark}; the
 original 64-expert topk-2 layout is kept as `basic` for parity.
 
+    python -m solver.vision.moe_pro --arch litemoe     # LOW-RESOURCE: ~16M active (<200M), runs on CPU/low VRAM
     python -m solver.vision.moe_pro --arch v3moe
     python -m solver.vision.moe_pro --arch dspark --topk 8
     python -m solver.vision.moe_pro --arch basic        # old moe_phone parity
+
+SCALE-UP PATH (small active budget -> bigger):
+    litemoe  (~16M active: embed 512, 32x4.7M experts, top-k 2, 1 shared)
+      -> raise --topk 3-4 and/or --exp-hidden (1-8M per expert)
+      -> v3moe  (~30-60M active, DeepSeek-V3 fine-grained)
+      -> dspark / 1B (full container, top-k 8)
+    Active params stay <= 200M at every rung so CPU / low-VRAM GPU both fit.
 
 REAL verification: instantiates, loads a REAL captcha from data/real_captchas_hf,
 runs a REAL torch CPU forward, prints REAL total/active params + ms + losses.
@@ -241,18 +249,56 @@ class MoEPro(nn.Module):
         per = self.moe.routed_expert_params() // cfg.num_routed
         return int(const + used * per)
 
-    # -- phone-runnable exports ---------------------------------------------
+    # -- phone-runnable exports (ONNX-traceable masked-all-expert forward) --------
+    def _trace_forward(self, x: torch.Tensor) -> torch.Tensor:
+        """ONNX-traceable re-derivation of forward() with IDENTICAL math (no .item(),
+        no dynamic ModuleList indexing). Every expert is computed and masked by the
+        top-k weights; un-selected experts get weight 0, so the output is exactly the
+        sparse path. Also serves as a dense-but-correct deployment artifact."""
+        x = x / 255.0 if x.dtype == torch.uint8 else x
+        tok = self.stem(x)
+        h = self.moe.ln(tok)                                  # (B,T,D)
+        B, T, D = h.shape
+        shared_out = sum(e(h) for e in self.moe.shared)
+        ctx = h.mean(dim=1).unsqueeze(1)                      # (B,1,D) pooled
+        logits = self.moe.router.fc(ctx)                      # (B,1,E)
+        topv, topi = torch.topk(logits, self.cfg.topk, dim=-1)
+        w = torch.softmax(topv, dim=-1)                       # (B,1,K)
+        wfull = torch.zeros_like(logits).scatter(-1, topi, w) # top-k slots, 0 elsewhere
+        routed_out = torch.zeros_like(h)
+        for e_i in range(self.cfg.num_routed):
+            wk = wfull[:, :, e_i].view(B, 1, 1)
+            routed_out = routed_out + self.moe.routed[e_i](h) * wk
+        tok = tok + shared_out + routed_out
+        g = tok.mean(dim=1)
+        return self.head(g)
+
     def export_onnx(self, path: str = "moe_pro.onnx", opset: int = 13):
+        import os
         import onnx
         self.eval()
+
+        class _W(nn.Module):
+            def __init__(self, m):
+                super().__init__()
+                self.m = m
+            def forward(self, x):
+                return self.m._trace_forward(x)
+
+        wrapper = _W(self)
         x = torch.zeros(1, 3, self.cfg.img, self.cfg.img)
         with torch.no_grad():
-            out, *_ = self(x)
-            torch.onnx.export(self, (x,), path, opset_version=opset,
+            torch.onnx.export(wrapper, (x,), path, opset_version=opset,
                               input_names=["image"], output_names=["logits"],
                               dynamic_axes={"image": {0: "batch"}, "logits": {0: "batch"}})
-        m = onnx.load(path); onnx.checker.check_model(m)
-        return path
+        m = onnx.load(path)
+        onnx.checker.check_model(m)
+        # ONNX may spill large fp32 weights into an external '.<name>.data' file;
+        # report the REAL total (graph + external data).
+        size = os.path.getsize(path)
+        if os.path.exists(path + ".data"):
+            size += os.path.getsize(path + ".data")
+        return path, size
 
     def export_tflite(self):
         raise NotImplementedError("export_tflite: convert the exported ONNX with onnx2tf (post-int8).")
@@ -265,6 +311,11 @@ class MoEPro(nn.Module):
 # --------------------------------------------------------------------------- arch presets
 
 PRESETS = {
+    # litemoe: LOW-RESOURCE fine-grained MoE. Small experts (1-8M each), top-k 2-4,
+    # total ACTIVE ~16M (< 200M cap) -> runs on CPU + low-VRAM GPU. 128px grid captcha.
+    "litemoe": MoECfg(embed=512, num_routed=32, topk=2, exp_hidden=3072,
+                      n_shared=1, shared_hidden=3072, stem_chan=(64, 128, 256, 512),
+                      name="litemoe-16m-active"),
     # v3moe: DeepSeek-V3-style fine-grained, top-k 4-8, ~1B / ~20-60M active
     "v3moe": MoECfg(embed=768, num_routed=96, topk=6, exp_hidden=4096,
                     n_shared=2, shared_hidden=8192, name="v3moe-1b"),
@@ -295,7 +346,8 @@ def _load_real_image(path: str, size: int = 128):
 
 def _default_image() -> Optional[str]:
     import glob, os
-    for pat in ("data/real_captchas_hf/gib_captcha/train/*.jpg",
+    for pat in ("data/real_captchas/grid/*.png",
+                "data/real_captchas_hf/gib_captcha/train/*.jpg",
                 "data/real_captchas_hf/gib_captcha/validation/*.jpg",
                 "data/real_captchas_hf/*/train/*.jpg"):
         hits = glob.glob(pat)
@@ -305,35 +357,42 @@ def _default_image() -> Optional[str]:
 
 
 def main():
+    import os
     ap = argparse.ArgumentParser()
-    ap.add_argument("--arch", default="v3moe", choices=list(PRESETS.keys()))
+    ap.add_argument("--arch", default="litemoe", choices=list(PRESETS.keys()))
     ap.add_argument("--image", default=None)
     ap.add_argument("--topk", type=int, default=None)
     ap.add_argument("--num-routed", type=int, default=None)
     ap.add_argument("--exp-hidden", type=int, default=None)
+    ap.add_argument("--embed", type=int, default=None)
+    ap.add_argument("--n-shared", type=int, default=None)
+    ap.add_argument("--shared-hidden", type=int, default=None)
     ap.add_argument("--quantize", action="store_true", help="also quantize int8 + measure CPU ms")
     ap.add_argument("--export-onnx", action="store_true")
-    ap.add_argument("--device", default="cpu")
     ap.add_argument("--warmup", type=int, default=3)
     ap.add_argument("--reps", type=int, default=10)
     args = ap.parse_args()
 
     cfg = PRESETS[args.arch]
-    if args.topk:        cfg.topk = args.topk
-    if args.num_routed:  cfg.num_routed = args.num_routed
-    if args.exp_hidden:  cfg.exp_hidden = args.exp_hidden
+    if args.topk is not None:          cfg.topk = args.topk
+    if args.num_routed is not None:    cfg.num_routed = args.num_routed
+    if args.exp_hidden is not None:    cfg.exp_hidden = args.exp_hidden
+    if args.embed is not None:         cfg.embed = args.embed
+    if args.n_shared is not None:      cfg.n_shared = args.n_shared
+    if args.shared_hidden is not None: cfg.shared_hidden = args.shared_hidden
 
     image_path = args.image or _default_image()
     assert image_path and os.path.exists(image_path), f"no real image found ({image_path!r})"
     print(f"REAL image: {image_path}")
 
-    net = build(cfg).to(args.device).eval()
-    x = _load_real_image(image_path, cfg.img).to(args.device)
+    net = build(cfg).eval()
+    x = _load_real_image(image_path, cfg.img)
 
     total = net.total_params()
     active = net.active_params(x)
+    per_expert = net.moe.routed_expert_params() // cfg.num_routed
 
-    # REAL CPU forward timing + router losses
+    # ---- REAL CPU forward + router losses ----
     with torch.no_grad():
         for _ in range(args.warmup):
             net(x)
@@ -343,19 +402,44 @@ def main():
         dt_ms = (time.perf_counter() - t0) / args.reps * 1000.0
         z, lb = net.router_losses(rlog, rw, ridx)
 
+    # ---- REAL GPU forward (only if torch sees CUDA, e.g. Colab T4) ----
+    gpu_ms = None
+    if torch.cuda.is_available():
+        gpu = torch.device("cuda")
+        netg = build(cfg).to(gpu).eval()
+        xg = x.to(gpu)
+        with torch.no_grad():
+            for _ in range(args.warmup):
+                netg(xg)
+            tg0 = time.perf_counter()
+            for _ in range(args.reps):
+                netg(xg)
+            gpu_ms = (time.perf_counter() - tg0) / args.reps * 1000.0
+
+    # ---- REAL size estimates from measured total_params ----
+    fp16_mb = total * 2 / 1e6
+    int8_mb = total * 1 / 1e6
+
     print(f"arch={args.arch!r} ({cfg.name})")
     print(f"  total_params      = {total:,}")
     print(f"  active_params     = {active:,}  ({active/total*100:.2f}% of total per image)")
-    print(f"  routed={cfg.num_routed} topk={cfg.topk} shared={cfg.n_shared} "
-          f"embed={cfg.embed} routed_h={cfg.exp_hidden} shared_h={cfg.shared_hidden}")
+    print(f"  per-expert params = {per_expert:,}  (routed={cfg.num_routed} topk={cfg.topk} "
+          f"shared={cfg.n_shared} embed={cfg.embed} routed_h={cfg.exp_hidden} shared_h={cfg.shared_hidden})")
     print(f"  REAL CPU fwd      = {dt_ms:.1f} ms  (img {cfg.img}x{cfg.img}, {args.reps} reps)")
+    if gpu_ms is not None:
+        print(f"  REAL GPU fwd      = {gpu_ms:.1f} ms")
+    print(f"  size est: fp16={fp16_mb:.1f} MB | int8={int8_mb:.1f} MB")
     print(f"  router z-loss     = {z.item():.6f}   (alpha={cfg.z_loss_alpha})")
     print(f"  router load-bal   = {lb.item():.6f}   (alpha={cfg.aux_loss_alpha})")
     print(f"  logits shape={tuple(logits.shape)} first={logits[0,:3].tolist()}")
 
     out = {"file": __file__, "total_params": int(total), "active_params": int(active),
-           "forward_ms": float(dt_ms), "arch": args.arch, "z_loss": float(z.item()),
-           "lb_loss": float(lb.item())}
+           "cpu_forward_ms": float(dt_ms), "forward_ms": float(dt_ms),
+           "arch": args.arch, "z_loss": float(z.item()), "lb_loss": float(lb.item()),
+           "fp16_size_mb": float(fp16_mb), "int8_size_mb": float(int8_mb),
+           "per_expert_params": int(per_expert)}
+    if gpu_ms is not None:
+        out["gpu_forward_ms"] = float(gpu_ms)
 
     if args.quantize:
         t0 = time.perf_counter()
@@ -368,16 +452,30 @@ def main():
             for _ in range(args.reps):
                 q(x)
             qms = (time.perf_counter() - t1) / args.reps * 1000
-        # real int8 params in the quantized graph
         qp = sum(p.numel() for p in q.parameters())
         print(f"  int8 quantized    : {qt:.0f} ms to build, {qp:,} params, fwd {qms:.1f} ms")
         out["int8_params"] = int(qp)
         out["int8_forward_ms"] = float(qms)
 
     if args.export_onnx:
-        p = net.export_onnx()
-        print(f"  ONNX exported     : {p}")
+        p, size = net.export_onnx()
+        mb = size / 1e6
+        print(f"  ONNX exported     : {p}  (real fp32 total {mb:.1f} MB)")
         out["onnx"] = p
+        out["onnx_fp32_mb"] = float(mb)
+        # REAL int8 ONNX via onnxruntime dynamic quantization (hard RAM-reduction evidence)
+        try:
+            import onnxruntime.quantization as oq
+            int8_path = p.replace(".onnx", "_int8.onnx")
+            oq.quantize_dynamic(p, int8_path)
+            isz = os.path.getsize(int8_path)
+            if os.path.exists(int8_path + ".data"):
+                isz += os.path.getsize(int8_path + ".data")
+            print(f"  ONNX int8 quant   : {int8_path}  (real {isz/1e6:.1f} MB)")
+            out["onnx_int8"] = int8_path
+            out["onnx_int8_mb"] = float(isz / 1e6)
+        except Exception as e:
+            print(f"  ONNX int8 quant   : skipped ({e})")
 
     with open("moe_pro_verify.json", "w") as f:
         json.dump(out, f, indent=2)
