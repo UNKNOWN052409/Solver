@@ -428,6 +428,16 @@ def _solve_grid(image_bgr, det: dict) -> dict:
     model_path = os.environ.get("CAPTCHA_MODEL", os.path.join(
         os.path.dirname(__file__), "model.pt"))
 
+    # always attach tile geometry (A2 tiler) so downstream has click coords
+    tiles = None
+    try:
+        from solver.vision import tiler as _tiler
+        t = _tiler.tile_grid(image_bgr)
+        tiles = {"n": t.get("n"), "cell_w": t.get("cell_w"),
+                 "cell_h": t.get("cell_h"), "tiles": t.get("tiles")}
+    except Exception:
+        tiles = None
+
     if torch is not None and os.path.exists(model_path):
         try:
             net = TileNet()
@@ -441,7 +451,7 @@ def _solve_grid(image_bgr, det: dict) -> dict:
             conf = det["confidence"]
             return {"type": "grid_tiles", "method": "TileNet.predict_labels",
                     "result": [lbl for lbl, _ in best],
-                    "confidence": float(conf)}
+                    "confidence": float(conf), "tiles": tiles}
         except Exception as exc:
             # fall through to the local OCR fallback rather than erroring
             pass
@@ -449,7 +459,8 @@ def _solve_grid(image_bgr, det: dict) -> dict:
     from solver.vision import solve_with_fallback
     r = solve_with_fallback.solve(image_bgr)
     return {"type": "grid_tiles", "method": r["method"],
-            "result": r["text"], "confidence": r["confidence"]}
+            "result": r["text"], "confidence": r["confidence"],
+            "tiles": tiles}
 
 
 def _solve_arkose(image_bgr, det: dict) -> dict:
