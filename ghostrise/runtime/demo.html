@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Demo</title>
+  <style>body{background:#123;color:#fff;font-family:sans-serif}</style>
+</head>
+<body>
+  <h1 id="t">GhostWire compiled page</h1>
+  <p>Answer: <span id="a">?</span></p>
+  <script>
+    // real inline JS the compiler must validate
+    function mul(a, b) { return a * b; }
+    document.getElementById("a").textContent = mul(6, 7);
+  </script>
+</body>
+</html>

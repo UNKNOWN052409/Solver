@@ -1,0 +1,15 @@
+
+provider: qwen-oauth-custom
+name: "local qwen"
+models:
+  - qwen3.8-max: "qwen3.8-max (local bridge @ :8050)"
+  - qwen3.7-plus: "qwen3.7-plus (local bridge)"
+  - qwen-max: "qwen-max (local bridge, default)"
+base_url: "http://127.0.0.1:8050"
+headers:
+  Authorization: "Bearer ${TOKEN}"   # bridge injects real token
+  Origin: "https://chat.qwen.ai"
+  Referer: "https://chat.qwen.ai/"
+  Content-Type: "application/json"
+key_env: "QWEN_BRIDGE_TOKEN"  # optional — bridge handles auth
+fallback: tokenrouter  # not needed since direct

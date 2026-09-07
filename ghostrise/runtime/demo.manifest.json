@@ -1,0 +1,8 @@
+{
+  "name": "demo",
+  "ok": true,
+  "js_engine": "node",
+  "assets_inlined": 0,
+  "size_bytes": 443,
+  "artifact": "demo.html"
+}

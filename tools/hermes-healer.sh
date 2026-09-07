@@ -71,9 +71,9 @@ if [ "$zb" -gt 12 ]; then
 fi
 
 # ---- 5. qwen-bridge revive (uni endpoint — hermes alias /model qwen)
-if ! pgrep -f "qwen_bridge.py" >/dev/null 2>&1; then
+if ! pgrep -f "qwen_bridge.py|qwen_browser_bridge.py" >/dev/null 2>&1; then
     ts "qwen-bridge DOWN -> revive" >> "$LOG"
-    nohup /home/kali/Rev/venv/bin/python /home/kali/NeoSolver/qwen_bridge.py >/tmp/qwen_bridge.log 2>&1 &
+    nohup /home/kali/Rev/venv/bin/python /home/kali/Rev/qwen_browser_bridge.py --serve --headless >/tmp/qwen_serve.log 2>&1 &
     ts "  qwen-bridge restarted (pid $!)" >> "$LOG"
 fi
 

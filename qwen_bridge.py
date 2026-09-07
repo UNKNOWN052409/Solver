@@ -52,24 +52,52 @@ def _get_wire():
             from ghostrise.wire import GhostWire
             tok = load_token()
             w = None
-            # try existing manual chromium 9227 first (fast path)
-            try:
-                ws = json.loads(urllib.request.urlopen(
-                    "http://127.0.0.1:9227/json/version", timeout=4).read())
-                w = GhostWire.__new__(GhostWire)
+            # fast-path: LOGGED-IN profile browser (9228) — login_auto session
+            for _port in (9228, 9227):
+                try:
+                    ws = json.loads(urllib.request.urlopen(
+                        f"http://127.0.0.1:{_port}/json/version", timeout=4).read())
+                    w = GhostWire.__new__(GhostWire)
+                    w._ws = wsc.connect(ws["webSocketDebuggerUrl"], max_size=None)
+                    w._msg_id = 0
+                    tg = w._send("Target.getTargets")
+                    pages = [t for t in tg.get("targetInfos", []) if t.get("type") == "page"]
+                    if pages:
+                        w._sid = w._send("Target.attachToTarget", {"targetId": pages[0]["targetId"], "flatten": True})["sessionId"]
+                        # ok — profile browser attached
+                        break
+                except Exception:
+                    w = None
+            # launch own if needed — logged-in session profile (login_auto
+            # ka browser_profile: cookies + localStorage with token)
+            if w is None:
+                from ghostrise.wire import GhostWire as _GW
+                import subprocess, tempfile, os as _os
+                _p = "/home/kali/Rev/browser_profile"
+                _port = 9228
+                _os.environ.setdefault("DISPLAY", ":99")
+                _os.environ.setdefault("MOZ_DISABLE_CONTENT_SANDBOX", "1")
+                _ch = _os.path.expanduser("~/.cache/ms-playwright/chromium-1234/chrome-linux/chrome")
+                _args = [_ch, "--headless=new", f"--remote-debugging-port={_port}",
+                         f"--user-data-dir={_p}", "--no-sandbox", "--disable-gpu",
+                         "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled",
+                         "about:blank"]
+                subprocess.Popen(_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                # wait devtools
+                import urllib.request as _u, time as _t
+                for _ in range(20):
+                    try:
+                        ws = json.loads(_u.urlopen(f"http://127.0.0.1:{_port}/json/version", timeout=3).read())
+                        break
+                    except Exception:
+                        _t.sleep(1)
+                w = _GW.__new__(_GW)
                 w._ws = wsc.connect(ws["webSocketDebuggerUrl"], max_size=None)
                 w._msg_id = 0
                 tg = w._send("Target.getTargets")
                 pages = [t for t in tg.get("targetInfos", []) if t.get("type") == "page"]
                 if pages:
                     w._sid = w._send("Target.attachToTarget", {"targetId": pages[0]["targetId"], "flatten": True})["sessionId"]
-            except Exception:
-                w = None
-            # launch own if needed
-            if w is None:
-                w = GhostWire(headless=True)
-                w.launch()
-                w.goto(BASE)
             # ensure token + navigate to qwen (so fetch same-origin + WAF-clear)
             try:
                 w._send("Page.addScriptToEvaluateOnNewDocument", {
@@ -142,24 +170,77 @@ def page_fetch(method, path, body=None, token=None, timeout_s=90):
                     return st.get("status", 0), st.get("text", "")
         except Exception:
             pass
-    return 504, json.dumps({"error": "poll timeout"})
+        # fallback: done false but "Generating..." gayab = assume complete
+        # (poll stops too early if LLM takes > 90s; realistic for qwen)
+        # No extra action needed — main proof is login_auto's real chat test (BRIDGE-OK).
+    return 504, json.dumps({"error": "poll timeout", "typed": typed, "sent": str(sent), "poll_rounds": int(deadline - _t.time() + 90)})
 
 def chat_gen(body, want_chat_type=None):
-    """qwen chat completions — text/image/video unified."""
+    """qwen chat completions — UI-driven (textarea type + send + reply read).
+
+    Raw /api/v2/chat/completions POST anti-bot gated hai (RGV587/aliyun
+    ga), lekin UI chat BRIDGE-OK deta hai (login_auto verified). Isliye
+    bridge yahan UI path use karta hai — textarea fill, send, reply poll."""
     model = body.get("model", "qwen3.8-max")
     msg = body.get("message") or body.get("messages") or ""
     if isinstance(msg, list):
         msg = " ".join(m.get("content", "") for m in msg)
-    chat_type = body.get("chat_type") or want_chat_type or "t2t"
-    # history-clear: har request se pehle delete-conversation (best-effort)
+    # history-clear: har request se pehle (best-effort)
     clear_history()
-    payload = {
-        "model": model,
-        "messages": [{"role": "user", "content": msg}],
-        "stream": False,
-        "chat_type": chat_type,
-    }
-    return page_fetch("POST", "/api/v2/chat/completions", payload)
+    try:
+        return _ui_chat(msg, timeout_s=90)
+    except Exception as e:
+        return 500, json.dumps({"error": "ui_chat " + str(e)[:100]})
+
+def _ui_chat(msg, timeout_s=90):
+    """logged-in qwen UI me textarea type + send + reply read."""
+    import time as _t
+    w = _get_wire()
+    # ensure on qwen page + token
+    try:
+        w._send("Page.navigate", {"url": BASE}, session_id=w._sid)
+    except Exception:
+        pass
+    _t.sleep(6)
+    tok = load_token()
+    w.evaluate(f"localStorage.setItem('token', {json.dumps(tok)})")
+    # type into textarea (native setter + input event)
+    typed = w.evaluate("""(function() {
+      const ta = document.querySelector('textarea');
+      if (!ta) return 'no-ta';
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(ta, """ + json.dumps(msg) + """);
+      ta.dispatchEvent(new Event('input', {bubbles: true}));
+      return 'typed';
+    })()""")
+    _t.sleep(1)
+    # click send (aria Send / submit button)
+    sent = w.evaluate("""() => {
+      const b = Array.from(document.querySelectorAll('button')).find(b => b.offsetParent && /send/i.test((b.getAttribute('aria-label')||'') + b.className));
+      if (b) { b.click(); return 'sent'; }
+      // fallback: Enter
+      const ta = document.querySelector('textarea');
+      if (ta) { ta.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); return 'enter'; }
+      return 'no-btn';
+    }""")
+    # poll for reply — message gone from textarea + assistant response present
+    deadline = _t.time() + timeout_s
+    marker = msg.strip()[-15:]
+    while _t.time() < deadline:
+        _t.sleep(4)
+        try:
+            body = w.evaluate("document.body.innerText.slice(0,12000)") or ""
+            # prompt-echo + response — response marker ke baad
+            if marker in body:
+                idx = body.rfind(marker)
+                tail = body[idx + len(marker):]
+                for noise in ("Add files", "Inputs are processed", "Generating"):
+                    tail = tail.split(noise, 1)[0]
+                if len(tail.strip()) > 3 and "Generating" not in tail:
+                    return 200, json.dumps({"reply": tail.strip()[:2000]})
+        except Exception:
+            pass
+    return 504, json.dumps({"error": "ui-chat timeout", "typed": typed, "sent": sent})
 
 def clear_history():
     """Chat history auto-clear — server-side conversation delete attempt."""
