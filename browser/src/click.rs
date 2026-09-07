@@ -11,6 +11,29 @@
 
 use enigo::{Button, Coordinate, Direction, Enigo, Mouse, Settings};
 
+/// Real click at (x, y). Returns a human-readable result line for callers
+/// (CLI prints it; the web UI panel shows it in the console).
+pub fn click_at(x: i32, y: i32, button: Button, double: bool) -> String {
+    match Enigo::new(&Settings::default()) {
+        Ok(mut e) => {
+            if let Err(err) = e.move_mouse(x, y, Coordinate::Abs) {
+                return format!("CLICK ERROR: move to ({x},{y}) failed: {err} — no display?");
+            }
+            if let Err(err) = e.button(button, Direction::Click) {
+                return format!("CLICK ERROR: click failed: {err} — no display?");
+            }
+            if double {
+                std::thread::sleep(std::time::Duration::from_millis(40));
+                let _ = e.button(button, Direction::Click);
+            }
+            format!("clicked {:?} at ({x},{y}){}", button, if double { " (double)" } else { "" })
+        }
+        Err(err) => format!(
+            "CLICK ERROR: cannot create input engine: {err} — needs a real display (X11/Wayland); no fake click emitted."
+        ),
+    }
+}
+
 pub fn run(args: &[String]) {
     // parse: click <x> <y> [--button left|right|middle] [--double]
     if args.len() < 2 {

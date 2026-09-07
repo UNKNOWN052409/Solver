@@ -1,0 +1,173 @@
+<!doctype html>
+<html><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Comet</title>
+<link rel="icon" type="image/png" href="/favicon.ico">
+<style>
+:root{--bg:#0d1117;--bg2:#161b22;--bg3:#21262d;--bd:#30363d;--tx:#c9d1d9;--dim:#8b949e;--ac:#58a6ff;--ok:#238636;--warn:#d29922;--err:#f85149}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--tx);font-family:ui-monospace,Menlo,Consolas,monospace;margin:0;padding:0;height:100vh;display:flex;flex-direction:column}
+/* top chrome */
+#chrome{background:var(--bg2);border-bottom:1px solid var(--bd);padding:8px 10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+#logo{width:26px;height:26px;border-radius:6px;background:linear-gradient(135deg,#1f6feb,#0d1117 70%);display:flex;align-items:center;justify-content:center;font-size:15px;color:#fff;font-weight:700}
+#title{font-weight:700;font-size:14px;color:#fff}
+#ver{color:var(--dim);font-size:11px}
+#tabs{display:flex;gap:4px;margin-left:8px}
+.tab{background:var(--bg3);padding:5px 14px;border-radius:7px 7px 0 0;cursor:pointer;font-size:12px;color:var(--dim);border:1px solid var(--bd);border-bottom:none}
+.tab.on{background:var(--bg);color:#fff}
+/* url bar */
+#navbar{background:var(--bg2);padding:6px 10px;display:flex;gap:6px;align-items:center;border-bottom:1px solid var(--bd)}
+#url{flex:1;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:16px;padding:7px 14px;font-family:inherit;font-size:13px;outline:none}
+#url:focus{border-color:var(--ac)}
+button{background:#21262d;color:var(--tx);border:1px solid var(--bd);border-radius:6px;padding:6px 12px;cursor:pointer;font-family:inherit;font-size:12px}
+button:hover{background:var(--bg3);border-color:var(--ac)}
+button.primary{background:var(--ok);border-color:var(--ok);color:#fff;font-weight:600}
+button.primary:hover{background:#2ea043}
+/* main layout */
+#main{flex:1;display:flex;overflow:hidden}
+#content{flex:1;padding:12px;overflow-y:auto}
+#side{width:300px;background:var(--bg2);border-left:1px solid var(--bd);padding:10px;overflow-y:auto}
+h3{margin:2px 0 8px;font-size:12px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+h3:first-child{margin-top:0}
+/* tools grid */
+#tools{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.card{background:var(--bg2);border:1px solid var(--bd);border-radius:8px;padding:10px}
+.card h4{margin:0 0 6px;font-size:13px;color:#fff}
+.card p{margin:0 0 8px;font-size:11px;color:var(--dim);line-height:1.4}
+.card .row{display:flex;gap:6px;margin-bottom:6px}
+input[type=text],textarea,select{width:100%;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:5px;padding:6px 8px;font-family:inherit;font-size:12px;outline:none}
+textarea{resize:vertical;min-height:52px}
+input:focus,textarea:focus{border-color:var(--ac)}
+label.chk{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--dim);cursor:pointer}
+/* console */
+#console{background:#010409;border:1px solid var(--bd);border-radius:8px;height:190px;overflow-y:auto;padding:8px;font-size:11.5px;line-height:1.5;flex-shrink:0;margin:10px 12px}
+.ln{white-space:pre-wrap;word-break:break-all}
+.ln .t{color:var(--dim);font-size:10px;margin-right:6px}
+.ln.ok{color:#3fb950}.ln.err{color:var(--err)}.ln.warn{color:var(--warn)}
+.ln .src{color:var(--ac);font-weight:600}
+/* status chips */
+#chips{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+.chip{font-size:10px;padding:3px 9px;border-radius:10px;border:1px solid var(--bd);color:var(--dim)}
+.chip.on{border-color:var(--ok);color:#3fb950}
+.chip.off{border-color:var(--err);color:var(--err)}
+/* sidebar widgets */
+.wid{background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:9px;margin-bottom:10px}
+.wid h4{margin:0 0 7px;font-size:12px;color:#fff}
+.wid .row{display:flex;gap:6px;margin-bottom:6px}
+.kv{display:flex;justify-content:space-between;font-size:11px;padding:3px 0;border-bottom:1px dashed #21262d}
+.kv b{color:#fff;font-weight:500}
+a{color:var(--ac)}
+.hint{font-size:10px;color:var(--dim);margin-top:4px}
+/* responsive */
+@media(max-width:800px){#side{display:none}#main{flex-direction:column}}
+</style></head><body>
+
+<div id=chrome>
+  <div id=logo>☄</div><div><div id=title>Comet</div><div id=ver id=ver>rust core · ai-assist</div></div>
+  <div id=tabs><div class="tab on" data-t=chat>ask</div><div class=tab data-t=browse>browse</div><div class=tab data-t=tools>tools</div></div>
+  <div id=chips></div>
+</div>
+
+<div id=navbar>
+  <input id=url value="https://example.com" spellcheck=false>
+  <button class=primary onclick=openUrl()>Open</button>
+  <button onclick=oauthPanel()>OAuth</button>
+  <button onclick=solveFor()>Solve</button>
+</div>
+
+<div id=main>
+  <div id=content></div>
+  <div id=side>
+    <div class=wid><h4>status</h4><div id=stat></div></div>
+    <div class=wid><h4>vision</h4>
+      <div class=row><input type=text id=vpath placeholder="/path/to/image.png"></div>
+      <div class=row><input type=text id=vtask placeholder="task (describe default)"></div>
+      <div class=row><label class=chk><input type=checkbox id=venh> OCR-enhance</label>
+      <button onclick=doVision()>See</button></div>
+      <div class=hint>non-vision model ko image dikhta hai; enhance = OCR+image fused prompt</div>
+    </div>
+    <div class=wid><h4>run (inbuilt compiler)</h4>
+      <div class=row><input type=text id=rpath placeholder="/path/to/source.py"></div>
+      <div class=row><button onclick=doRun()>Run</button></div>
+      <div class=hint>py · js · sh · rs · c · cpp</div>
+    </div>
+    <div class=wid><h4>click</h4>
+      <div class=row><input type=text id=cx placeholder="x" style=width:60px><input type=text id=cy placeholder="y" style=width:60px>
+      <select id=cb style=width:70px><option>left</option><option>right</option><option>middle</option></select></div>
+      <div class=row><label class=chk><input type=checkbox id=cdbl> double</label><button onclick=doClick()>Click</button></div>
+      <div class=hint>real enigo mouse event (needs display)</div>
+    </div>
+  </div>
+</div>
+
+<div id=console></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function log(msg,cls,src){const c=$('console');const d=document.createElement('div');d.className='ln '+(cls||'');
+  const t=new Date().toTimeString().slice(0,8);
+  d.innerHTML=(src?`<span class=src>${esc(src)}</span> `:'')+`<span class=t>${t}</span>`+esc(msg);
+  c.appendChild(d);c.scrollTop=c.scrollHeight;}
+async function post(api,fields,src){try{log('→ '+api,'','NET');
+  const r=await fetch(api,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(fields)});
+  const t=await r.text();
+  log(t.startsWith('AI ERROR')||t.startsWith('VISION ERROR')||t.startsWith('PDF ERROR')||t.startsWith('CLICK ERROR')||t.startsWith('SOLVE')?t:t,'',src);
+  return t;}catch(e){log('ERROR: '+e.message,'err');return '';}}
+async function getStatus(){try{const r=await fetch('/api/status');const d=await r.json();
+  const chips=[['comet '+d.comet,'on'],['llm '+(d.model||'-'),d.key_set?'on':'off'],['solver',d.solver&&d.solver.includes('unreachable')?'off':'on'],['display',d.click_display?'on':'off']];
+  $('chips').innerHTML=chips.map(([l,s])=>`<span class="chip ${s}">${esc(l)}</span>`).join('');
+  $('stat').innerHTML=`
+    <div class=kv><span>version</span><b>${esc(d.comet)}</b></div>
+    <div class=kv><span>llm base</span><b>${esc((d.llm_base||'').replace(/^https?:\/\//,''))}</b></div>
+    <div class=kv><span>model</span><b>${esc(d.model)}</b></div>
+    <div class=kv><span>key set</span><b style="color:${d.key_set?'#3fb950':'#f85149'}">${d.key_set?'yes':'NO'}</b></div>
+    <div class=kv><span>display</span><b>${d.click_display?'yes':'headless'}</b></div>`;
+  }catch(e){log('status err: '+e.message,'err');}}
+/* tabs */
+const views={chat:`<h3>ask comet</h3><div class=card style=max-width:640px><h4>chat</h4>
+  <p>comet connects to qwen / deepseek / any openai-compatible provider (env COMET_LLM_*)</p>
+  <div class=row><textarea id=prompt placeholder="summarize this page…"></textarea></div>
+  <div class=row><button class=primary onclick=doAsk()>Ask</button><button onclick=clearOut()>Clear</button></div>
+  <div id=out style="margin-top:10px;background:#010409;border:1px solid var(--bd);border-radius:6px;padding:10px;min-height:120px;white-space:pre-wrap;font-size:12.5px"></div></div>`,
+browse:`<h3>browse</h3><div class=card style=max-width:640px><h4>open url</h4>
+  <p>real HTTP fetch (ureq) — page head shows in the console below</p>
+  <div class=row><button class=primary onclick=openUrl()>Fetch current URL</button></div></div>`,
+tools:`<h3>tools</h3><div id=tools>
+  <div class=card><h4>pdf edit (ai)</h4><p>pdftotext extract → ai rewrite</p>
+    <div class=row><input type=text id=ppath placeholder="/path/doc.pdf"></div>
+    <div class=row><textarea id=pins placeholder="instruction (e.g. fix the date)"></textarea></div>
+    <div class=row><button class=primary onclick=doPdf()>Edit PDF</button></div></div>
+  <div class=card><h4>captcha solve</h4><p>POSTs to solver/ service</p>
+    <div class=row><input type=text id=surl value="https://example.com"></div>
+    <div class=row><button class=primary onclick=solveFor()>Solve</button></div></div>
+  <div class=card><h4>oauth capture</h4><p>qwen / provider code capture link + saved code</p>
+    <div class=row><button class=primary onclick=oauthPanel()>Open OAuth</button></div>
+    <div id=ocap class=hint></div></div>
+</div>`};
+let cur='chat';
+function setView(t){cur=t;$('content').innerHTML=views[t];
+  document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('on',x.dataset.t===t));}
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>setView(t.dataset.t));
+function clearOut(){const o=$('out');if(o)o.innerHTML='';}
+/* actions */
+async function doAsk(){const p=$('prompt').value.trim();if(!p)return log('empty prompt','warn');
+  const o=$('out');o.textContent='…';const t=await post('/api/ask',{prompt:p},'ask');o.textContent=t||'(empty)';}
+function openUrl(){const u=$('url').value.trim();if(!u)return;post('/api/open',{url:u},'browse');}
+async function doVision(){const p=$('vpath').value.trim();if(!p)return log('image path missing','warn');
+  const t=$('vtask').value.trim()||'describe this image';
+  await post('/api/vision',{path:p,task:t,enhance:$('venh').checked?'1':'0'},'vision');}
+async function doPdf(){const p=$('ppath').value.trim(),i=$('pins').value.trim();
+  if(!p||!i)return log('pdf path + instruction dono chahiye','warn');
+  await post('/api/pdf',{path:p,instruction:i},'pdf');}
+function solveFor(){const u=$('url').value.trim()||'https://example.com';post('/api/solve',{url:u},'solve');}
+async function oauthPanel(){setView('tools');const t=await post('/api/oauth',{},'oauth');
+  try{const d=JSON.parse(t);$('ocap').innerHTML=d.captured_code?`captured: <b>${esc(d.captured_code)}</b> · `:''+`<a href="${esc(d.link)}" target=_blank>capture link</a>`;}catch(e){}}
+async function doRun(){const p=$('rpath').value.trim();if(!p)return log('source path missing','warn');
+  await post('/api/run',{path:p},'run');}
+async function doClick(){const x=$('cx').value||'0',y=$('cy').value||'0';
+  await post('/api/click',{x:x,y:y,button:$('cb').value,double:$('cdbl').checked?'1':'0'},'click');}
+/* boot */
+setView('chat');getStatus();log('Comet ready — every button hits a real server-side call (ask/open/vision/pdf/run/click/oauth/solve)');
+setInterval(getStatus,30000);
+</script></body></html>

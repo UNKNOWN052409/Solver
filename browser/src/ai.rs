@@ -39,6 +39,13 @@ pub fn model() -> String {
     std::env::var("COMET_LLM_MODEL").unwrap_or_else(|_| "deepseek-v4-flash".into())
 }
 
+/// True if a provider key is configured (for the UI status endpoint).
+pub fn key_present() -> bool {
+    let direct = std::env::var("COMET_LLM_KEY").unwrap_or_default();
+    let fallback = std::env::var("AISK_API_KEY").unwrap_or_default();
+    !direct.is_empty() || !fallback.is_empty()
+}
+
 /// Build an OpenAI-compatible chat completion JSON body (with optional image).
 pub fn build_body(msgs: &[(&str, &str)], image_b64: Option<&str>, max_tokens: u32) -> String {
     let mut parts = Vec::new();
