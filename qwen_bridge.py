@@ -210,6 +210,14 @@ class H(BaseHTTPRequestHandler):
             # generate OAuth capture link (browser) — return as redirect doc
             ok, out = oauth_capture()
             self._json(200 if ok else 500, {"oauth_captured": ok, "detail": out[:400]})
+        elif self.path == "/v1/models":
+            # qwen ke real models (API v2) — bridge se expose
+            st, txt = page_fetch("GET", "/api/v2/models/")
+            try:
+                raw = json.loads(txt) if txt.startswith("{") else {"data": []}
+                self._json(st, raw)
+            except Exception:
+                self._json(st, {"data": []})
         elif self.path.startswith("/token"):
             self._json(200, {"token": load_token()[:20] + "...", "len": len(load_token())})
         else:

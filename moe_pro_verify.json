@@ -1,9 +1,13 @@
 {
   "file": "/home/kali/NeoSolver/solver/vision/moe_pro.py",
-  "total_params": 908013950,
-  "active_params": 30355838,
-  "forward_ms": 1080.5649486671125,
-  "arch": "basic",
-  "z_loss": 0.017366701737046242,
-  "lb_loss": 0.6399999260902405
+  "total_params": 157577342,
+  "active_params": 16019582,
+  "cpu_forward_ms": 708.6189487332982,
+  "forward_ms": 708.6189487332982,
+  "arch": "litemoe",
+  "z_loss": 0.011889108456671238,
+  "lb_loss": 0.3199999928474426,
+  "fp16_size_mb": 315.154684,
+  "int8_size_mb": 157.577342,
+  "per_expert_params": 4718592
 }

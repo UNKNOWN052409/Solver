@@ -748,6 +748,21 @@ class BrowserTools:
                     "parameters": {"type": "object", "properties": {}}},
                 "fn": lambda page, **kw: extract_form_context(page),
             },
+            "compile_verify": {
+                "schema": {
+                    "description": "Compile + validate an agent-written page: "
+                                   "source HTML/CSS/JS -> self-contained "
+                                   "artifact staged for GhostWire to open.",
+                    "parameters": {"type": "object", "properties": {
+                        "source": {"type": "string",
+                                   "description": "full HTML source to "
+                                                  "compile/validate"},
+                        "name": {"type": "string",
+                                 "description": "artifact name (default "
+                                                "'page')"}}}},
+                "fn": lambda page, source="", name="page", **kw:
+                      _compiler_tool(source, name),
+            },
         }
 
 
@@ -761,6 +776,13 @@ def re_search_captcha(text: str) -> bool:
     import re
     return bool(re.search(r"captcha|verify|just a moment|security|checkbox",
                           text, re.I))
+
+
+def _compiler_tool(source: str = "", name: str = "page") -> dict:
+    """compile_verify tool body — lazily imports ghostrise.compiler so the
+    registry loads even if node/compiler is absent at import time."""
+    from ghostrise.compiler import compile_verify_tool
+    return compile_verify_tool(source=source, name=name)
 
 
 # ---------------------------------------------------------------------------

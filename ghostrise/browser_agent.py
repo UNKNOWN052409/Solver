@@ -46,6 +46,9 @@ TOOL_MATCHES = [
     (r"error|wrong|problem|kya galti|fail|issue", "get_errors"),
     # form introspection (what fields exist?)
     (r"form", "extract_form_context"),
+    # build / compile / verify an agent-written page
+    (r"compile|build a page|build page|make a page|create a page|"
+     r"serve a page|self-contained page|compile_verify", "compile_verify"),
     # layout / where is everything
     (r"layout|where|describe|map|box|position|element", "describe_page"),
     (r"verify|confirm|landed|clicked", "verify_click"),
