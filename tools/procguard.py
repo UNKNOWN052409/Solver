@@ -26,7 +26,8 @@ PROTECTED = (
     "burp-mcp", "server.py:9876",       # burp MCP
     "searx.webapp",                     # SearXNG
     "prexzy-proxy", "prexzy-sse",      # Prexzy
-    "hermes",                           # hermes agents/workers/kernels
+    "hermes",
+    "qwen_bridge",                           # hermes agents/workers/kernels
     "watchdog",
     "crond", "cron",
     "kanban",

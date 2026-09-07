@@ -70,4 +70,11 @@ if [ "$zb" -gt 12 ]; then
     ts "  swept $zb chrome zombies" >> "$LOG"
 fi
 
+# ---- 5. qwen-bridge revive (uni endpoint — hermes alias /model qwen)
+if ! pgrep -f "qwen_bridge.py" >/dev/null 2>&1; then
+    ts "qwen-bridge DOWN -> revive" >> "$LOG"
+    nohup /home/kali/Rev/venv/bin/python /home/kali/NeoSolver/qwen_bridge.py >/tmp/qwen_bridge.log 2>&1 &
+    ts "  qwen-bridge restarted (pid $!)" >> "$LOG"
+fi
+
 ts "ok (hermes=$n)" >> "$LOG"
