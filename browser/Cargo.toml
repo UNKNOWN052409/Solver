@@ -12,5 +12,6 @@ lto = true
 strip = true
 panic = "abort"
 
-[profile.dev]
+[dependencies]
+enigo = "0.6.1"
 # Dev builds stay quick; no extra deps to pull.

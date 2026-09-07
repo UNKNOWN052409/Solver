@@ -24,6 +24,10 @@ use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Stdio};
 
+mod click;
+mod solverapi;
+mod ui;
+
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 fn main() {
@@ -36,6 +40,8 @@ fn main() {
         "run" => cmd_run(&args[2..]),
         "serve" => cmd_serve(&args[2..]),
         "open" => cmd_open(&args[2..]),
+        "click" => click::run(&args[2..]),
+        "ui" => ui::run(&args[2..]),
         "whoami" => cmd_whoami(&args[2..]),
         "solve" => cmd_solve(&args[2..]),
         // Proxy mode + solver config are read from env; expose them here.
@@ -53,6 +59,8 @@ fn usage() {
            run <lang|path> [srcfile]   inbuilt compiler: compile+run, print output\n\
            serve [--port N]            start HTTP/MCP-ready server on 127.0.0.1\n\
            open <url>                  HTTP GET via std TcpStream (no external crate)\n\
+           click <x> <y> [--button …]  REAL OS mouse click via enigo\n\
+           ui                          launch the egui desktop window\n\
            whoami                       print the stable per-user persona line\n\
            solve <sitekey> [url]       print the solver-api request contract\n\
            config                       print proxy/solver/env config state\n\

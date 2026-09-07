@@ -1,1 +1,1 @@
-/home/kali/NeoSolver/browser/target/release/comet: /home/kali/NeoSolver/browser/src/main.rs
+/home/kali/NeoSolver/browser/target/release/comet: /home/kali/NeoSolver/browser/src/click.rs /home/kali/NeoSolver/browser/src/main.rs /home/kali/NeoSolver/browser/src/solverapi.rs /home/kali/NeoSolver/browser/src/ui.rs
