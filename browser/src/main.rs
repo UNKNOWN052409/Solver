@@ -24,9 +24,13 @@ use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Stdio};
 
+mod ai;
 mod click;
+mod oauth;
+mod pdf;
 mod solverapi;
 mod ui;
+mod vision;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -42,6 +46,10 @@ fn main() {
         "open" => cmd_open(&args[2..]),
         "click" => click::run(&args[2..]),
         "ui" => ui::run(&args[2..]),
+        "ask" => cmd_ask(&args[2..]),
+        "vision" => cmd_vision(&args[2..]),
+        "pdf" => cmd_pdf(&args[2..]),
+        "oauth" => cmd_oauth(&args[2..]),
         "whoami" => cmd_whoami(&args[2..]),
         "solve" => cmd_solve(&args[2..]),
         // Proxy mode + solver config are read from env; expose them here.
@@ -359,4 +367,64 @@ fn parse_url(raw: &str) -> (String, u16, String) {
         None => (hostpart.to_string(), 443),
     };
     (host, port, path.to_string())
+}
+
+/// `comet ask <prompt...>` — send a real chat completion and print the answer.
+/// Env: COMET_LLM_BASE / COMET_LLM_KEY / COMET_LLM_MODEL (default AISK deepseek).
+fn cmd_ask(args: &[String]) {
+    let prompt = args.join(" ");
+    if prompt.trim().is_empty() {
+        eprintln!("comet ask wants a prompt (e.g. `comet ask \"summarize this page\"`)");
+        return;
+    }
+    let answer = ai::ask(&prompt);
+    println!("{answer}");
+}
+
+/// `comet vision <image> [--enhance]<task>` — give the model vision of an image.
+/// Non-vision model -> route image to the vision channel; --enhance fuses OCR.
+fn cmd_vision(args: &[String]) {
+    if args.is_empty() {
+        eprintln!("comet vision wants an image path (e.g. `comet vision shot.png`)");
+        return;
+    }
+    let mut path = args[0].clone();
+    let mut enhance = false;
+    let mut task = "describe this image".to_string();
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--enhance" => { enhance = true; i += 1; }
+            "--task" => { if i + 1 < args.len() { task = args[i + 1].clone(); i += 2; } else { i += 1; } }
+            _ => { task = args[i..].join(" "); i = args.len(); }
+        }
+    }
+    if enhance {
+        println!("{}", vision::enhance(&path, &task));
+    } else {
+        println!("{}", vision::describe_image(&path));
+    }
+}
+
+/// `comet pdf <path> <instruction...>` — extract PDF text, AI-edit it, print result.
+fn cmd_pdf(args: &[String]) {
+    if args.len() < 2 {
+        eprintln!("comet pdf wants `<path> <instruction>` (e.g. `comet pdf contract.pdf \"fix the date to 2026\"`)");
+        return;
+    }
+    let path = args[0].clone();
+    let instruction = args[1..].join(" ");
+    println!("{}", pdf::run(&path, &instruction));
+}
+
+/// `comet oauth [--port N]` — start the Qwen/provider OAuth capture server and
+/// print the capture link. Redirect with ?code=... is captured to qwen_oauth_code.txt.
+fn cmd_oauth(args: &[String]) {
+    let port = args
+        .iter()
+        .position(|a| a == "--port")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(8091);
+    oauth::run(port);
 }
