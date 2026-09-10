@@ -18,7 +18,15 @@ def bridge_chat(prompt, chat_type="t2t", model="qwen3.8-max"):
     )
     with urllib.request.urlopen(req, timeout=180) as r:
         out = json.loads(r.read().decode())
-    return out.get("reply", str(out)[:500])
+    # UI-route returns {"reply": ...} on success, {"error":"poll timeout", ...} on timeout
+    # handle both gracefully — don't crash bot
+    reply = out.get("reply")
+    if reply:
+        return str(reply)[:500]
+    # timeout / partial — show what's available
+    detail = f"model={model} chat_type={chat_type} typed={str(out.get('typed'))} sent={str(out.get('sent'))} error={out.get('error', '')}"
+    print(f"[!] partial response (poll/timeout or server gate): {detail}")
+    return str(detail)[:500]
 
 if __name__ == "__main__":
     for q, ct in [("test image: draw a cat", "image"),
