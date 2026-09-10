@@ -27,3 +27,4 @@ engine/target/
 engine/gui/target/
 engine/tui/target/
 tmp/
+*.onnx.data
