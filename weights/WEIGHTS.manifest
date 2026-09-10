@@ -1,0 +1,13 @@
+file: moe_pro.onnx.data
+size: 630325248
+sha256: 8c54f3a6bcfb83015df336f596d99c8a0353728b6aa735000c0adce8f495bfd7
+chunk_mib: 90
+chunk_bytes: 94371840
+parts: 7
+part_sha: moe_pro.onnx.data.part-00 aaf83a42aa918c12522fe07b6562e74eb74b5256a79dc37f9659c3f7907c08c5
+part_sha: moe_pro.onnx.data.part-01 cb27eb30ed48db426cc73d3aa6060c3e2d9f8b44f82a50c83ac93381db42f36f
+part_sha: moe_pro.onnx.data.part-02 98da1d98653ab297b8d1dac3d017df2a1c6ebacb8e9707fb0b5a570193c91b1b
+part_sha: moe_pro.onnx.data.part-03 ca98cbd70f7091423970a220a29737866cb07c79dc37de52803cb6b9d31d8c76
+part_sha: moe_pro.onnx.data.part-04 c580262e24cbfca5bd3780e8c17d861494dd14d90caafd6ecaf38e4e521abfc6
+part_sha: moe_pro.onnx.data.part-05 90d90cc504f6f48c92ec2bff63ee81771e22c8ba63e31d93feea58bc819827ad
+part_sha: moe_pro.onnx.data.part-06 5248a874db6ff4aec5d61d99326af05dcb91b117e6d51ba3207f2a1d44184edc
