@@ -11,6 +11,7 @@ MANIFEST="weights/WEIGHTS.manifest"
 DESTDIR="${1:-.}"
 
 [ -f "$MANIFEST" ] || { echo "restore: $MANIFEST not found — run from repo root" >&2; exit 1; }
+mkdir -p "$DESTDIR"
 
 BASE=$(awk '/^file:/{print $2}' "$MANIFEST")
 SIZE=$(awk '/^size:/{print $2}' "$MANIFEST")
