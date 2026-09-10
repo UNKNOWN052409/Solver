@@ -1,0 +1,44 @@
+════════════════════════════════════════════════════
+ SOLVER FULL-BATTERY REPORT (04:15 UTC, 03-Sep-2026)
+════════════════════════════════════════════════════
+
+TEST ENV: Solver ka apna browser stack (ghostrise) + Xvfb :99 headed
++ resi Jio IP (152.56.16.105, residential=TRUE)
+
+── BATTERY 4/4 PASS ──────────────────────────────
+
+1. ACSession (anti-captcha browser) — PASS
+   2captcha demo: open + wall-check + widget-scan clean, attempts=2
+
+2. GhostSession HEADED (Xvfb :99, stealth Firefox) — PASS
+   httpbin 200, real UA (Firefox/131 Windows), engine ladder live
+
+3. resi egress — PASS
+   Reliance Jio, residential=TRUE (engine proxy=resi|auto modes ready)
+
+4. Vision classify (trained ONNX TileNet) — PASS
+   bus-grid tile → ['a bus'], 192ms roundtrip (server auto-spawn)
+
+── RUST BINARY (GhostMouse) LIVE ─────────────────
+
+5. x elonmusk — PASS (fresh posts JSON, keyless chain)
+6. sniff 5sim.net/login — PASS:
+   captcha_tech: [cf-managed-challenge], walled: true
+   (apna browser CF managed wall ko detect karta hai — solve path
+    fingerprint-gated hai, honest documented)
+
+── STATE OF ALL ⚠️ ITEMS (post-fix) ──────────────
+
+- v2 grids: TRAINED model + 68ms ONNX serve ✓
+- ACSession: open+verify loop ✓ (4/4 aaj)
+- Xvfb rootless: :99 UP permanent tool ✓
+- CloakBrowser 0.5.10 ✓
+- resi|auto proxy modes ✓ (system resi default fallback)
+- proxy pool + API + CLI ✓ (add/next/check/stats live)
+- 5sim: API captcha-free ✓ / web turnstile = FP-gate (final verdict)
+- X: timeline/post live ✓ / search = nitter wall (documented)
+- revkit: browser-map + proxy-MITM dono live ✓
+- vision GPU-adaptive: device detect + run.sh shortcut ✓
+
+REPO: github.com/UNKNOWN052409/Solver @ 2bb05bf (sab pushed, clean)
+════════════════════════════════════════════════════
